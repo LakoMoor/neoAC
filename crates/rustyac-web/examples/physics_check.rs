@@ -40,7 +40,7 @@ fn main() {
             if keys.contains(&0) {
                 let e = heading(&s.view()) - h0;
                 // (a dead band and only a tap now and then: a rear-driven car spins when the heading is chased)
-                let tap = (t.get() * 60.0) as u64 % 6 == 0;
+                let tap = ((t.get() * 60.0) as u64).is_multiple_of(6);
                 if e > 0.08 && tap {
                     k.push(LEFT);
                 } else if e < -0.08 && tap {
