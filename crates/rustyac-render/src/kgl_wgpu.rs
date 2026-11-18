@@ -1686,6 +1686,13 @@ fn boxcut(lo: vec3<f32>, ld: vec3<f32>, centre: vec3<f32>, half: vec3<f32>, tt: 
                             // a wet, greyer picture, and streaks falling in three depths
                             let grey = dot(c.rgb, vec3<f32>(0.3, 0.59, 0.11));
                             c = vec4<f32>(mix(c.rgb, vec3<f32>(grey), 0.25 * rain) * (1.0 - 0.12 * rain), c.a);
+                            // wet tarmac: the grey road takes a sheen of the sky, strongest far away (low in the angle of view)
+                            let mx = max(c.r, max(c.g, c.b));
+                            let sat = (mx - min(c.r, min(c.g, c.b))) / max(mx, 0.02);
+                            let roadish = (1.0 - smoothstep(0.10, 0.28, sat)) * (1.0 - smoothstep(0.35, 0.6, mx)) * smoothstep(0.52, 0.62, v.uv.y);
+                            let far = 1.0 - smoothstep(0.55, 1.0, v.uv.y);
+                            let sky = textureSampleLevel(src, smp, vec2<f32>(v.uv.x, 0.06 + 0.2 * v.uv.y), 0.0).rgb;
+                            c = vec4<f32>(c.rgb + sky * roadish * (0.10 + 0.35 * far) * rain, c.a);
                             let aspect = gain.k.z / gain.k.w;
                             var streak = 0.0;
                             for (var layer = 0; layer < 3; layer = layer + 1) {{
