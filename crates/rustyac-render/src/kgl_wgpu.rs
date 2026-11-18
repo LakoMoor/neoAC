@@ -1890,7 +1890,7 @@ if (gain.a[3].w > 0.0) {{
         let gain = self.present_gain.get();
         let gain_buffer = {
             use wgpu::util::DeviceExt;
-            let (ow, oh) = match target.texture() { t => (t.width() as f32, t.height() as f32) };
+            let (ow, oh) = (target.texture().width() as f32, target.texture().height() as f32);
             let r = self.present_rain.get();
             let lamps = self.present_lamps.get();
             let head = [gain, self.present_sharpen.get(), ow, oh, r[0], r[1], r[2], r[3]];
