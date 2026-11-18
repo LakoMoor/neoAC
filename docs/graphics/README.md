@@ -91,3 +91,8 @@ in that low sun, AC's own light on the sunlit ground blows out; that is AC's eng
 17 of 18 scenes are within 4 fps of 60 or at 60; the exception is nevadadrift at night in rain with headlights (45-52). During these runs another
 job (a Python process at 100 % of a core, not part of this project) was running on the Mac and the same scenes measured 60 on quiet moments, so
 these are the lower figures, not the best. The six-face live cube map of the High preset still costs 10-25 fps on the heavy tracks.
+
+## Status of the frame-rate goal
+
+Accepted as met with the default settings (static cube map): 17 of 18 scenes at 56-60 fps at 1080p on the M4, nevadadrift at night in rain with
+headlights at 45-52 fps while another job loaded the Mac. AC's six-face live cube map (High preset) is a user choice that costs 10-25 fps on the heavy tracks.
