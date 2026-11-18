@@ -293,3 +293,25 @@ fn the_cars_data_agrees_with_the_cars_own_spec_sheet() {
     }
     assert!(bad.is_empty(), "{bad:#?}");
 }
+
+#[test]
+fn every_lut_an_ini_names_is_in_the_cars_data() {
+    // a curve file named by any value of any ini (`POWER_CURVE=power.lut`, `FILE=...lut`) must be packed
+    let mut bad = Vec::new();
+    for car in cars() {
+        for name in car.data.names().filter(|n| n.to_ascii_lowercase().ends_with(".ini")) {
+            let text = String::from_utf8_lossy(car.data.get(name).unwrap()).to_string();
+            for line in text.lines() {
+                let line = line.split(';').next().unwrap_or("").trim();
+                let Some((_, value)) = line.split_once('=') else { continue };
+                let value = value.trim().trim_matches('"');
+                // (the game never reads coast.lut, and a car without traction control may name a curve it does not ship)
+                let unused = value.eq_ignore_ascii_case("coast.lut") || value.eq_ignore_ascii_case("traction_control.lut");
+                if value.to_ascii_lowercase().ends_with(".lut") && !unused && !value.contains(['/', '\\']) && car.data.get(value).is_none() {
+                    bad.push(format!("{}/{name}: names {value}, which is not in the car's data", car.name));
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+}
