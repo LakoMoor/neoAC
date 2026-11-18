@@ -43,3 +43,17 @@ The wet-road ray walk was the whole cost of rain (60 fps with it off); it is now
 With the default settings (no `[CUBEMAP]` in `video.ini`) the goal holds on every scene but the Huracán on nevadadrift in rain
 with headlights. AC's live cube map (`FACES_PER_FRAME`, six faces in the High preset) costs 10–25 fps on the heavy tracks; paint
 and glass now mirror the scene through the screen-space pass, so the static cube map costs no look.
+
+## More checks
+
+- `checks/shadows_four_distances.png`: shadows from 0.5 m to about 4 m of camera distance on three tracks (a car on tarmac, a car under trees, a building and a
+  tree on gravel, a canopy over a pit lane): soft edges everywhere, no acne, no floating shadows.
+- `checks/wet_road_mirror_poles_car.png`: the wet road mirrors the light poles, trees, the lorry and the car; the lamps' own lens glow is
+  mirrored too but it is faint because the lenses glow little in the frame.
+- Flicker, 16 screenshots 0.4 s apart of a standing car in front of foliage (akina, day): pixels that flip by more than 40 levels between two frames are 0.01 %
+  before and after; the mean frame difference is 0.47 before and 0.55 after (wind in the trees; the screenshots are 2.5 Hz, so this finds a shimmer that
+  lasts, not a single-frame one).
+- Bloom: AC's own glare (YEBIS) is on and works but is gentle: with `GLARE=0` the pixels in a 15 px ring around the brightest light change by 0.58 levels
+  of 255 on average. A bloom of our own in the present pass cost 7–10 fps and showed little, so it was left out.
+- Frame rates are sensitive to what else the Mac runs: with another process holding a core, the same scene measured 40–43 fps and 60 fps when idle.
+  The table above is the best of repeated runs; AC's six-face live cube map is the one setting that costs a lot on its own.

@@ -1967,8 +1967,8 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
                     let dd = (ndcp - vec2<f32>(sx, sy)) * vec2<f32>(asp, 1.0);
                     let r = 0.045 / (z * tg + 0.8) * 3.0;
                     // longer downwards from the mirror point, thin sideways
-                    let streak = exp(-(dd.x * dd.x) / (r * r * 0.5)) * exp(-abs(dd.y) / (r * 5.0)) * 0.5;
-                    c = vec4<f32>(c.rgb + gain.a[i + 5].xyz * streak * g.w * wet * dark * 0.8, c.a);
+                    let streak = exp(-(dd.x * dd.x) / (r * r * 0.5)) * exp(-abs(dd.y) / (r * 9.0)) * 1.3;
+                    c = vec4<f32>(c.rgb + gain.a[i + 5].xyz * streak * g.w * wet * dark * 1.4, c.a);
                 }}
             }}
         }}
