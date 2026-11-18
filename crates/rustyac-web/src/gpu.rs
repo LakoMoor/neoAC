@@ -46,6 +46,10 @@ struct DrawConstants {
     mult_ba: [f32; 4],
     layer: [f32; 4],
     layer2: [f32; 4],
+    /// the headlights: the two lamps (xyz; w: how bright, 0 off) and the way they point (xyz)
+    lamp0: [f32; 4],
+    lamp1: [f32; 4],
+    lamp_dir: [f32; 4],
 }
 
 const DRAW_BYTES: usize = std::mem::size_of::<DrawConstants>();
@@ -93,6 +97,28 @@ struct DrawCall {
     mesh: usize,
     index_count: u32,
     offset: u32,
+}
+
+/// The headlights of the car's hull: two lamps on the nose a little below the middle of its height,
+/// the beams pointing ahead and a touch down. `[lamp 0, lamp 1, direction]` (all zero: off).
+fn headlamps(view: &CarView, shape: &CarShape) -> [[f32; 4]; 3] {
+    if !view.lights || shape.boxes.is_empty() {
+        return [[0.0; 4]; 3];
+    }
+    let (mut x_max, mut z_max, mut y_min, mut y_max) = (0.3f32, -1.0f32, f32::MAX, f32::MIN);
+    for b in &shape.boxes {
+        x_max = x_max.max(b.centre[0].abs() + b.size[0] * 0.5);
+        z_max = z_max.max(b.centre[2] + b.size[2] * 0.5);
+        y_min = y_min.min(b.centre[1] - b.size[1] * 0.5);
+        y_max = y_max.max(b.centre[1] + b.size[1] * 0.5);
+    }
+    let y = y_min + 0.4 * (y_max - y_min);
+    let body = &view.body;
+    let world = |p: [f32; 3]| [0, 1, 2].map(|k| p[0] * body[0][k] + p[1] * body[1][k] + p[2] * body[2][k] + body[3][k]);
+    let (a, b) = (world([-0.62 * x_max, y, z_max - 0.1]), world([0.62 * x_max, y, z_max - 0.1]));
+    let tilt = [0, 1, 2].map(|k| body[2][k] - body[1][k] * 0.06);
+    let l = (tilt[0] * tilt[0] + tilt[1] * tilt[1] + tilt[2] * tilt[2]).sqrt().max(1e-6);
+    [[a[0], a[1], a[2], 1.0], [b[0], b[1], b[2], 1.0], [tilt[0] / l, tilt[1] / l, tilt[2] / l, 0.0]]
 }
 
 /// What a frame drew.
@@ -718,6 +744,7 @@ impl Gpu {
         let view_matrix = view_matrix(&camera.matrix);
         let view_proj = mul(&view_matrix, &projection);
         let eye = camera.matrix[3];
+        let lamps = headlamps(view, shape);
         let base = DrawConstants {
             world: IDENTITY,
             world_view: view_matrix,
@@ -731,6 +758,9 @@ impl Gpu {
             mult_ba: [0.0; 4],
             layer: [0.0, 1.0, -1.0, -1.0],
             layer2: [1.0, 1.0, 0.0, 0.0],
+            lamp0: lamps[0],
+            lamp1: lamps[1],
+            lamp_dir: lamps[2],
         };
         let planes = frustum(&view_proj);
         let eye3 = [eye[0], eye[1], eye[2]];

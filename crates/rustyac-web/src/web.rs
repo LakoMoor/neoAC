@@ -399,6 +399,9 @@ pub struct Game {
     work_ms: f64,
     dropped_seconds: f64,
     drawn: crate::gpu::DrawStats,
+    /// the debug picture's camera as a drag turned it round the car (yaw, pitch) and the wheel or a pinch zoomed it
+    orbit: [f32; 2],
+    zoom: f32,
     /// Full mode: AC's own renderer draws the picture (the debug view's models are not loaded).
     full: Option<Box<AcRenderer>>,
     /// Full mode's fixed frame is on the screen, and this its proof ([`Game::full_proof`]): the
@@ -588,7 +591,7 @@ impl Game {
         if full.is_some() {
             let view = session.view();
             let sound = start_sound(&mut session, &mut notes);
-            return Game { session, gpu, last_ms: None, view, notes, frames: 0, steps: 0, work_ms: 0.0, dropped_seconds: 0.0, drawn: Default::default(), full, proof, missing, remote_models: Vec::new(), link, gui, render_scale: 1.0, sound };
+            return Game { session, gpu, last_ms: None, view, notes, frames: 0, steps: 0, work_ms: 0.0, dropped_seconds: 0.0, drawn: Default::default(), orbit: [0.0; 2], zoom: 1.0, full, proof, missing, remote_models: Vec::new(), link, gui, render_scale: 1.0, sound };
         }
         let setup = &session.sim.setup;
         let (car_model, track_models) = content::model_files(Path::new(ROOT), &setup.car, &setup.track, &setup.layout);
@@ -649,7 +652,7 @@ impl Game {
         }
         let view = session.view();
         let sound = start_sound(&mut session, &mut notes);
-        Game { session, gpu, last_ms: None, view, notes, frames: 0, steps: 0, work_ms: 0.0, dropped_seconds: 0.0, drawn: Default::default(), full: None, proof: None, missing, remote_models, link, gui, render_scale: 1.0, sound }
+        Game { session, gpu, last_ms: None, view, notes, frames: 0, steps: 0, work_ms: 0.0, dropped_seconds: 0.0, drawn: Default::default(), orbit: [0.0; 2], zoom: 1.0, full: None, proof: None, missing, remote_models, link, gui, render_scale: 1.0, sound }
     }
 
     /// Full mode did not start for want of these files, one per line: fetch them and make the
@@ -677,7 +680,18 @@ impl Game {
             self.session.drawn_frame(seconds);
         }
         self.view = self.session.view();
-        let camera = self.session.camera_frame(&self.view, seconds);
+        let mut camera = self.session.camera_frame(&self.view, seconds);
+        if self.full.is_none() && (self.orbit != [0.0; 2] || (self.zoom - 1.0).abs() > 1e-3) {
+            // the debug picture: the camera turned round the car by a drag, nearer or farther by the wheel
+            let body = self.view.body[3];
+            let pivot = [body[0], body[1] + 0.6, body[2]];
+            if self.orbit != [0.0; 2] {
+                camera = crate::full::orbit_frame(camera, pivot, self.orbit[0], self.orbit[1]);
+            }
+            for k in 0..3 {
+                camera.matrix[3][k] = pivot[k] + (camera.matrix[3][k] - pivot[k]) * self.zoom;
+            }
+        }
         let remote = self.session.remote_views();
         let others: Vec<OtherCar> = remote.iter().zip(&self.session.remote_shapes).zip(&self.remote_models).map(|((view, shape), model)| OtherCar { view, shape, model: *model }).collect();
         match &mut self.full {
@@ -935,6 +949,23 @@ impl Game {
     /// Clicks of the cockpit's brake-bias control: positive forward (]), negative rearward ([).
     pub fn bias(&mut self, clicks: i32) {
         self.session.request_bias(clicks);
+    }
+
+    /// The debug picture's camera turned round the car: a drag of `dx`, `dy` page pixels.
+    pub fn orbit_by(&mut self, dx: f32, dy: f32) {
+        self.orbit[0] += dx * 0.006;
+        self.orbit[1] = (self.orbit[1] + dy * 0.005).clamp(-0.2, 1.2);
+    }
+
+    /// The wheel's notches (or a pinch's steps): positive comes nearer.
+    pub fn zoom_by(&mut self, notches: f32) {
+        self.zoom = (self.zoom * (1.0 - 0.08 * notches)).clamp(0.4, 3.0);
+    }
+
+    /// The camera back behind the car (a double tap or double click).
+    pub fn orbit_reset(&mut self) {
+        self.orbit = [0.0; 2];
+        self.zoom = 1.0;
     }
 
     /// F1: the next view (chase, chase 2, bonnet, bumper, dash, cockpit).

@@ -37,6 +37,8 @@ struct Options {
     weather: Option<String>,
     grip: Option<f32>,
     hour: Option<f32>,
+    /// the chase camera turned round the car: yaw and pitch in degrees, and the distance factor
+    orbit: Option<[f32; 3]>,
     /// `--press KeyF@5`: a key pressed by the game itself after that many seconds, for checks without a keyboard
     press: Vec<(f64, KeyCode)>,
     shot: Option<PathBuf>,
@@ -48,7 +50,7 @@ struct Options {
 }
 
 fn parse_options() -> Result<Options, String> {
-    let mut options = Options { car: None, track: None, layout: String::new(), spawn: "pit".to_string(), race: None, size: (1280, 720), join: None, name: None, team: String::new(), password: String::new(), no_audio: false, volume: None, audio_wav: None, quit_after: None, start_on_foot: false, debug_panel: false, weather: None, grip: None, hour: None, press: Vec::new(), shot: None, skin: String::new(), manual: false };
+    let mut options = Options { car: None, track: None, layout: String::new(), spawn: "pit".to_string(), race: None, size: (1280, 720), join: None, name: None, team: String::new(), password: String::new(), no_audio: false, volume: None, audio_wav: None, quit_after: None, start_on_foot: false, debug_panel: false, weather: None, grip: None, hour: None, orbit: None, press: Vec::new(), shot: None, skin: String::new(), manual: false };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or(format!("{arg} needs a value"));
@@ -69,6 +71,14 @@ fn parse_options() -> Result<Options, String> {
             "--debug-panel" => options.debug_panel = true,
             "--weather" => options.weather = Some(value()?),
             "--grip" => options.grip = Some(value()?.parse().map_err(|e| format!("--grip: {e}"))?),
+            "--orbit" => {
+                let v = value()?;
+                let n: Vec<f32> = v.split(',').map(|p| p.trim().parse().map_err(|e| format!("--orbit: {e}"))).collect::<Result<_, _>>()?;
+                if n.len() < 2 {
+                    return Err("--orbit <yaw>,<pitch>[,<distance factor>]".into());
+                }
+                options.orbit = Some([n[0], n[1], n.get(2).copied().unwrap_or(1.0)]);
+            }
             "--hour" => options.hour = Some(value()?.parse().map_err(|e| format!("--hour: {e}"))?),
             "--press" => {
                 let v = value()?;
@@ -95,7 +105,7 @@ fn parse_options() -> Result<Options, String> {
                 options.size = (w.parse().map_err(|e| format!("--size: {e}"))?, h.parse().map_err(|e| format!("--size: {e}"))?);
             }
             "--help" | "-h" => {
-                println!("rustyac-play [--car <id>] [--track <id>] [--layout <l>] [--spawn pit|hotlap|start] [--race <race.ini>] [--size 1280x720] [--start-on-foot] [--weather <content/weather folder>] [--grip <0.4-1: the whole track's grip, a wet road below 1>] [--hour <0-23>] [--debug-panel: F10's panel open from the start] [--shot <file.png>: the last picture when --quit-after ends the run] [--skin <s>] [--manual] [--no-audio] [--volume 0..1] [--audio-wav <file>] [--quit-after <seconds>]\n  on a server (Kunos' acServer, the local network too): --join <host>:<port> [--car <the server's model>] [--name <driver>] [--team <t>] [--password <p>]\nthe game's folder: AC_ROOT, or Steam's usual place");
+                println!("rustyac-play [--car <id>] [--track <id>] [--layout <l>] [--spawn pit|hotlap|start] [--race <race.ini>] [--size 1280x720] [--start-on-foot] [--weather <content/weather folder>] [--grip <0.4-1: the whole track's grip, a wet road below 1>] [--hour <0-23>] [--orbit <yaw>,<pitch>[,<distance factor>]: the chase camera turned round the car] [--debug-panel: F10's panel open from the start] [--shot <file.png>: the last picture when --quit-after ends the run] [--skin <s>] [--manual] [--no-audio] [--volume 0..1] [--audio-wav <file>] [--quit-after <seconds>]\n  on a server (Kunos' acServer, the local network too): --join <host>:<port> [--car <the server's model>] [--name <driver>] [--team <t>] [--password <p>]\nthe game's folder: AC_ROOT, or Steam's usual place");
                 std::process::exit(0);
             }
             other => return Err(format!("unknown option {other} (--help)")),
@@ -368,6 +378,11 @@ impl App {
         session.sound = sound.is_some().then_some(feed);
         let brake_key = rustyac_game::input::ini::ControlsIni::load(&cfg.join("controls.ini")).map_or(0x28, |ini| ini.get_hex("KEYBOARD", "BRAKE")).max(0);
         let brake_key = if brake_key == 0 { 0x28 } else { brake_key };
+        let mut gui = gui;
+        if let Some([yaw, pitch, zoom]) = self.options.orbit {
+            gui.orbit = [yaw.to_radians(), pitch.to_radians()];
+            gui.zoom = zoom.clamp(0.35, 3.5);
+        }
         Ok(Game { session, full: renderer, gui, paused: false, last: None, sound, grab: None, last_right: None, scale: 1.0, brake_key })
     }
 }
@@ -807,7 +822,18 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
                 let started = *START.get_or_init(Instant::now);
+                // the frame rate once the first seconds (loading, shader making) are over
+                static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                static MARK: std::sync::OnceLock<(Instant, u64)> = std::sync::OnceLock::new();
+                let frames = FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if started.elapsed().as_secs_f64() >= 5.0 {
+                    MARK.get_or_init(|| (Instant::now(), frames));
+                }
                 if self.options.quit_after.is_some_and(|s| started.elapsed().as_secs_f64() >= s) {
+                    if let Some((at, first)) = MARK.get() {
+                        let seconds = at.elapsed().as_secs_f64().max(0.001);
+                        println!("fps: {:.1} ({} frames in {seconds:.1} s)", (frames - first) as f64 / seconds, frames - first);
+                    }
                     if let Some(path) = &self.options.shot {
                         match screen.game.full.read_pixels() {
                             Ok(pixels) => {

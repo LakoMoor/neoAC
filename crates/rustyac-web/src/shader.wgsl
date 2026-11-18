@@ -32,6 +32,10 @@ struct Draw {
     layer: vec4<f32>,
     // x: the diffuse texture's uv factor, y: alpha factor
     layer2: vec4<f32>,
+    // the headlights: the two lamps (w: how bright, 0 off) and the way they point
+    lamp0: vec4<f32>,
+    lamp1: vec4<f32>,
+    lamp_dir: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Draw;
@@ -59,6 +63,31 @@ struct ModelOut {
     @location(2) uv: vec2<f32>,
 };
 
+// One lamp's light on a surface: a bright core and a wide soft skirt, falling with the distance, strongest
+// where the surface faces the lamp (the beam is a cone; the surface's normal decides how much of it it takes).
+fn spot(lamp: vec3<f32>, world: vec3<f32>, n: vec3<f32>) -> f32 {
+    let d = world - lamp;
+    let dist = max(length(d), 0.001);
+    let ldir = d / dist;
+    let cosang = dot(ldir, u.lamp_dir.xyz);
+    let core = pow(smoothstep(0.90, 0.997, cosang), 1.5);
+    let skirt = pow(smoothstep(0.35, 0.985, cosang), 2.0);
+    let fall = 1.0 / (1.0 + dist * dist * 0.012);
+    let facing = 0.2 + 0.8 * max(dot(n, -ldir), 0.0);
+    // (not on the car's own nose)
+    return (0.3 * skirt + 0.9 * core) * fall * facing * smoothstep(0.8, 2.6, dist);
+}
+
+// The colour c lit by the headlights (the surface's own colour decides how much it shows).
+fn with_lamps(c: vec3<f32>, world: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    if (u.lamp0.w <= 0.0) {
+        return c;
+    }
+    let lit = spot(u.lamp0.xyz, world, n) + spot(u.lamp1.xyz, world, n);
+    let warm = vec3<f32>(1.0, 0.9, 0.7);
+    return c + warm * (1.2 * (1.0 - exp(-lit * 1.4))) * (0.12 + 1.1 * c);
+}
+
 fn fogged(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
     let d = length(world - u.camera.xyz);
     return mix(c, u.fog.rgb, 1.0 - exp(-d * u.camera.w));
@@ -78,7 +107,7 @@ fn vs_mesh(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>) -> MeshO
 fn fs_mesh(i: MeshOut) -> @location(0) vec4<f32> {
     let n = normalize(i.normal);
     let lit = saturate(dot(n, -u.light.xyz));
-    let c = u.color.rgb * (u.light.w + (1.0 - u.light.w) * lit);
+    let c = with_lamps(u.color.rgb * (u.light.w + (1.0 - u.light.w) * lit), i.world, n);
     return vec4<f32>(fogged(c, i.world), u.color.a);
 }
 
@@ -135,5 +164,5 @@ fn fs_model(i: ModelOut) -> @location(0) vec4<f32> {
     } else {
         c = t.rgb * (u.light.w + (1.0 - u.light.w) * lit);
     }
-    return vec4<f32>(fogged(c, i.world), t.a);
+    return vec4<f32>(fogged(with_lamps(c, i.world, n), i.world), t.a);
 }

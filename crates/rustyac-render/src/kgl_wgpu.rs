@@ -342,7 +342,7 @@ pub struct Kgl {
     /// 0 = dry; above 0 falling rain is drawn over the picture, this heavy (0..1): `[heaviness, seconds, turned, tilted]`: the streaks fall with the seconds, and stay in the world as the camera turns (yaw and pitch in screen heights).
     pub present_rain: std::cell::Cell<[f32; 4]>,
     /// The headlights (see `AcRenderer::draw`): eleven vec4s, camera right/up/ahead/position, the two lamps, the beams' direction and the car's box; `[3].w` is the strength (0 = off).
-    pub present_lamps: std::cell::Cell<[f32; 96]>,
+    pub present_lamps: std::cell::Cell<[f32; 128]>,
     pub features: wgpu::Features,
     pub video: KglVideoSettings,
     pub screen_render_target: KglRenderTarget,
@@ -498,7 +498,7 @@ impl Kgl {
             present_gain: std::cell::Cell::new(1.0),
             present_sharpen: std::cell::Cell::new(0.0),
             present_rain: std::cell::Cell::new([0.0; 4]),
-            present_lamps: std::cell::Cell::new([0.0; 96]),
+            present_lamps: std::cell::Cell::new([0.0; 128]),
             features,
             video,
             screen_render_target: KglRenderTarget::default(),
@@ -1661,7 +1661,7 @@ impl Kgl {
                     "{FULLSCREEN_VS}
                     @group(0) @binding(0) var src: texture_2d<f32>;
                     @group(0) @binding(1) var smp: sampler;
-                    struct Gain {{ k: vec4<f32>, r: vec4<f32>, a: array<vec4<f32>, 24> }};
+                    struct Gain {{ k: vec4<f32>, r: vec4<f32>, a: array<vec4<f32>, 32> }};
                     @group(0) @binding(2) var<uniform> gain: Gain;
                     @group(0) @binding(3) var dep: texture_2d<f32>;
                     fn cubic(t: f32) -> vec4<f32> {{
@@ -1711,12 +1711,15 @@ fn wpos(p: vec2<i32>, dims: vec2<f32>) -> vec3<f32> {{
     let uv = (vec2<f32>(p) + 0.5) / dims;
     let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     let d = textureLoad(dep, p, 0).r;
-    // the scene's perspective (near and far from the camera), standard depth
-    let zn = gain.a[15].z; let zf = gain.a[15].w;
+    let zn = gain.a[28].x; let zf = gain.a[28].y;
     let z = zn * zf / (zf - d * (zf - zn));
-    let t = gain.a[0].w;
-    let dir = gain.a[2].xyz + gain.a[0].xyz * (ndc.x * t * gain.a[1].w) + gain.a[1].xyz * (ndc.y * t);
-    return gain.a[3].xyz + dir * z;
+    let t = gain.a[24].w;
+    let dir = gain.a[26].xyz + gain.a[24].xyz * (ndc.x * t * gain.a[25].w) + gain.a[25].xyz * (ndc.y * t);
+    return gain.a[27].xyz + dir * z;
+}}
+fn zlin(d: f32) -> f32 {{
+    let zn = gain.a[28].x; let zf = gain.a[28].y;
+    return zn * zf / (zf - d * (zf - zn));
 }}
 fn boxcut(lo: vec3<f32>, ld: vec3<f32>, centre: vec3<f32>, half: vec3<f32>, tt: f32) -> f32 {{
     let inv = 1.0 / (ld + vec3<f32>(0.00001));
@@ -1735,18 +1738,70 @@ fn boxcut(lo: vec3<f32>, ld: vec3<f32>, centre: vec3<f32>, half: vec3<f32>, tt: 
                     }}
                     @fragment fn fs(v: V) -> @location(0) vec4<f32> {{
                         var c = base(v);
+                        let have_depth = textureDimensions(dep).x > 1u;
                         let rain = gain.r.x;
                         if (rain > 0.0) {{
                             // a wet, greyer picture, and streaks falling in three depths
                             let grey = dot(c.rgb, vec3<f32>(0.3, 0.59, 0.11));
                             c = vec4<f32>(mix(c.rgb, vec3<f32>(grey), 0.25 * rain) * (1.0 - 0.12 * rain), c.a);
-                            // wet tarmac: the grey road takes a sheen of the sky, strongest far away (low in the angle of view)
-                            let mx = max(c.r, max(c.g, c.b));
-                            let sat = (mx - min(c.r, min(c.g, c.b))) / max(mx, 0.02);
-                            let roadish = (1.0 - smoothstep(0.10, 0.28, sat)) * (1.0 - smoothstep(0.35, 0.6, mx)) * smoothstep(0.52, 0.62, v.uv.y);
-                            let far = 1.0 - smoothstep(0.55, 1.0, v.uv.y);
-                            let sky = textureSampleLevel(src, smp, vec2<f32>(v.uv.x, 0.06 + 0.2 * v.uv.y), 0.0).rgb;
-                            c = vec4<f32>(c.rgb + sky * roadish * (0.10 + 0.35 * far) * rain, c.a);
+                            // wet tarmac mirrors what is above it: a ray from the road, bounced up, walked through the picture
+                            // (depth tells where it meets the scene); what it misses is the sky
+                            if (have_depth) {{
+                                let dims = vec2<f32>(textureDimensions(dep));
+                                let px = vec2<i32>(v.uv * dims);
+                                let d0 = textureLoad(dep, px, 0).r;
+                                if (d0 < 0.999999) {{
+                                    let hit = wpos(px, dims);
+                                    let hx = wpos(px + vec2<i32>(1, 0), dims);
+                                    let hy = wpos(px + vec2<i32>(0, 1), dims);
+                                    var n = normalize(cross(hy - hit, hx - hit));
+                                    if (n.y < 0.0) {{ n = -n; }}
+                                    let mx = max(c.r, max(c.g, c.b));
+                                    let sat = (mx - min(c.r, min(c.g, c.b))) / max(mx, 0.02);
+                                    // tarmac: flat, grey and dark (paint, grass and the car's body are not)
+                                    let roadish = smoothstep(0.9, 0.97, n.y) * (1.0 - smoothstep(0.10, 0.30, sat)) * (1.0 - smoothstep(0.35, 0.6, mx));
+                                    if (roadish > 0.0) {{
+                                        let cam = gain.a[27].xyz;
+                                        let vdir = normalize(hit - cam);
+                                        let rdir = vec3<f32>(vdir.x, -vdir.y, vdir.z);
+                                        let t_ = gain.a[24].w; let asp = gain.a[25].w;
+                                        var refl = vec3<f32>(0.0);
+                                        var found = 0.0;
+                                        var tt = 0.25;
+                                        for (var s = 0; s < 28; s = s + 1) {{
+                                            tt = tt * 1.16;
+                                            let pp = hit + rdir * tt;
+                                            let rel = pp - cam;
+                                            let zc = dot(rel, gain.a[26].xyz);
+                                            if (zc < 0.1) {{ break; }}
+                                            let sx = dot(rel, gain.a[24].xyz) / (zc * t_ * asp);
+                                            let sy = dot(rel, gain.a[25].xyz) / (zc * t_);
+                                            let suv = vec2<f32>(sx * 0.5 + 0.5, 0.5 - sy * 0.5);
+                                            if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) {{ break; }}
+                                            let sd = textureLoad(dep, vec2<i32>(suv * dims), 0).r;
+                                            let zs = zlin(sd);
+                                            // the ray has gone behind what the picture shows there, and not by far
+                                            if (zc > zs && zc < zs + 2.0 + 0.1 * zs) {{
+                                                let edge = smoothstep(0.0, 0.08, min(min(suv.x, 1.0 - suv.x), min(suv.y, 1.0 - suv.y)));
+                                                refl = textureSampleLevel(src, smp, suv, 0.0).rgb;
+                                                found = edge;
+                                                break;
+                                            }}
+                                        }}
+                                        let sky = textureSampleLevel(src, smp, vec2<f32>(v.uv.x, 0.05 + 0.2 * v.uv.y), 0.0).rgb;
+                                        refl = mix(sky, refl, found);
+                                        let fres = 0.05 + 0.95 * pow(1.0 - clamp(dot(-vdir, n), 0.0, 1.0), 5.0);
+                                        c = vec4<f32>(c.rgb + refl * roadish * (0.10 + 0.9 * fres) * rain * 0.85, c.a);
+                                    }}
+                                }}
+                            }} else {{
+                                let mx = max(c.r, max(c.g, c.b));
+                                let sat = (mx - min(c.r, min(c.g, c.b))) / max(mx, 0.02);
+                                let roadish = (1.0 - smoothstep(0.10, 0.28, sat)) * (1.0 - smoothstep(0.35, 0.6, mx)) * smoothstep(0.52, 0.62, v.uv.y);
+                                let far = 1.0 - smoothstep(0.55, 1.0, v.uv.y);
+                                let sky = textureSampleLevel(src, smp, vec2<f32>(v.uv.x, 0.06 + 0.2 * v.uv.y), 0.0).rgb;
+                                c = vec4<f32>(c.rgb + sky * roadish * (0.10 + 0.35 * far) * rain, c.a);
+                            }}
                             let aspect = gain.k.z / gain.k.w;
                             var streak = 0.0;
                             for (var layer = 0; layer < 3; layer = layer + 1) {{
@@ -1773,7 +1828,6 @@ if (gain.a[15].y > 0.5) {{
     let sc = select(select(100.0, 1000.0, v.uv.x > 0.33), 10000.0, v.uv.x > 0.66);
     c = vec4<f32>(vec3<f32>((1.0 - d) * sc), 1.0);
 }}
-let have_depth = textureDimensions(dep).x > 1u;
 if (gain.a[3].w > 0.0 && have_depth) {{
     let dims = vec2<f32>(textureDimensions(dep));
     let px = vec2<i32>(v.uv * dims);
@@ -1805,8 +1859,8 @@ if (gain.a[3].w > 0.0 && have_depth) {{
                     let dist = length(dd);
                     let ldir = dd / max(dist, 0.001);
                     let cosang = dot(ldir, gain.a[6].xyz);
-                    let core = smoothstep(0.93, 0.995, cosang);
-                    let skirt = smoothstep(0.6, 0.96, cosang);
+                    let core = pow(smoothstep(0.90, 0.997, cosang), 1.5);
+                    let skirt = pow(smoothstep(0.35, 0.985, cosang), 2.0);
                     let fall = 1.0 / (1.0 + dist * dist * 0.012);
                     // a surface facing the lamp takes the light; one turned away does not
                     let facing = 0.2 + 0.8 * max(dot(n, -ldir), 0.0);
@@ -1851,8 +1905,8 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
                     let dist = length(d);
                     let cosang = dot(d / max(dist, 0.001), gain.a[6].xyz);
                     // a bright core and a wide soft skirt, falling with the distance
-                    let core = smoothstep(0.93, 0.995, cosang);
-                    let skirt = smoothstep(0.6, 0.96, cosang);
+                    let core = pow(smoothstep(0.90, 0.997, cosang), 1.5);
+                    let skirt = pow(smoothstep(0.35, 0.985, cosang), 2.0);
                     let fall = 1.0 / (1.0 + dist * dist * 0.012);
                     lit = lit + (0.30 * skirt + 0.9 * core) * fall;
                 }}
@@ -1920,6 +1974,14 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
         c = vec4<f32>(c.rgb + glow, c.a);
     }}
 }}
+                        if (gain.a[29].x > 0.5) {{
+                            // the finish: the hour's exposure, a vignette that closes in at night, a soft S in the mid tones
+                            let q = (v.uv - vec2<f32>(0.5)) * vec2<f32>(gain.a[25].w, 1.0);
+                            let vig = 1.0 - gain.a[28].w * smoothstep(0.35, 1.05, length(q));
+                            var e = clamp(c.rgb * gain.a[29].x * vig, vec3<f32>(0.0), vec3<f32>(1.0));
+                            e = mix(e, e * e * (3.0 - 2.0 * e), 0.2);
+                            c = vec4<f32>(e, c.a);
+                        }}
                         return c;
                     }}"
                 );
@@ -2010,7 +2072,7 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
             self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("kgl present gain"), contents: &bytes, usage: wgpu::BufferUsages::UNIFORM })
         };
         // the scene's depth, as a float texture, for the lights that fall on walls and trees
-        let scene_depth = if self.present_lamps.get()[15 * 4 + 1] > 0.5 || self.present_lamps.get()[3 * 4 + 3] > 0.0 {
+        let scene_depth = if self.present_lamps.get()[15 * 4 + 1] > 0.5 || self.present_lamps.get()[3 * 4 + 3] > 0.0 || self.present_lamps.get()[28 * 4 + 2] > 0.0 {
             let found = self.scene_depth.borrow().clone();
             found.map(|t| self.depth_as_float(&t))
         } else {

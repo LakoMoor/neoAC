@@ -2482,7 +2482,31 @@ $('gear').onclick = () => {
   $('gear').blur();
 };
 $('fullscreen').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
-window.addEventListener('wheel', (event) => guiMouse(event, 3, 0, -Math.sign(event.deltaY)), { passive: false });
+window.addEventListener('wheel', (event) => {
+  guiMouse(event, 3, 0, -Math.sign(event.deltaY));
+  // the debug picture: the wheel comes nearer or farther
+  if (state.running && event.target === canvas && !hasGui() && state.game && state.game.zoom_by) {
+    state.game.zoom_by(-Math.sign(event.deltaY));
+    event.preventDefault();
+  }
+}, { passive: false });
+
+// The debug picture's camera (Full mode has AC's own): a drag on the picture turns it round the car, the
+// wheel or a pinch zooms, a double click or a double tap brings it back. touch.js calls the same three.
+window.rustyac.orbitBy = (dx, dy) => state.running && state.game && state.game.orbit_by && state.game.orbit_by(dx, dy);
+window.rustyac.zoomBy = (notches) => state.running && state.game && state.game.zoom_by && state.game.zoom_by(notches);
+window.rustyac.orbitReset = () => state.running && state.game && state.game.orbit_reset && state.game.orbit_reset();
+let dragFrom = null;
+canvas.addEventListener('mousedown', (event) => {
+  if (state.running && !hasGui()) dragFrom = { x: event.clientX, y: event.clientY };
+});
+window.addEventListener('mousemove', (event) => {
+  if (!dragFrom) return;
+  window.rustyac.orbitBy(event.clientX - dragFrom.x, event.clientY - dragFrom.y);
+  dragFrom = { x: event.clientX, y: event.clientY };
+});
+window.addEventListener('mouseup', () => (dragFrom = null));
+canvas.addEventListener('dblclick', () => state.running && !hasGui() && window.rustyac.orbitReset());
 window.addEventListener('contextmenu', (event) => {
   if (state.running && hasGui() && event.target === canvas) event.preventDefault();
 });

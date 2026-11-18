@@ -90,6 +90,7 @@ function build() {
   pad(tops, 'dn', 'Gear −', '', [['KeyQ', 'q']]);
   pad(tops, 'up', 'Gear +', '', [['KeyE', 'e']]);
   pad(tops, 'cam', 'View', '', [['KeyC', 'c']]);
+  pad(tops, 'lights', 'Lights', '', [['KeyL', 'l']]);
   pad(tops, 'hand', 'Handbrake', '', [['KeyH', 'h']]);
   const exit = document.createElement('div');
   exit.className = 'pad exit';
@@ -137,8 +138,82 @@ function build() {
   return root;
 }
 
+// A finger on the picture turns the camera round the car (the right mouse button's drag), two fingers
+// apart or together take it nearer or farther (the wheel), a double tap brings it back (a double right click).
+function cameraGestures() {
+  const view = document.getElementById('view');
+  if (!view) return;
+  view.style.touchAction = 'none';
+  const pointers = new Map();
+  const prev = new Map();
+  let turning = false;
+  let pinch = 0;
+  let lastTap = 0;
+  const mouse = (type, x, y, buttons) => view.dispatchEvent(new MouseEvent(type, { clientX: x, clientY: y, button: 2, buttons, bubbles: true, cancelable: true }));
+  const wheel = (delta) => view.dispatchEvent(new WheelEvent('wheel', { deltaY: delta, bubbles: true, cancelable: true }));
+  const spread = () => {
+    const [a, b] = [...pointers.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
+  view.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return;
+    view.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) {
+      turning = true;
+      mouse('mousedown', e.clientX, e.clientY, 2);
+    } else if (pointers.size === 2) {
+      if (turning) mouse('mouseup', e.clientX, e.clientY, 0);
+      turning = false;
+      pinch = spread();
+    }
+  });
+  view.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    const before = pointers.get(e.pointerId);
+    if (before) prev.set(e.pointerId, before);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1 && turning) {
+      const was = prev.get(e.pointerId);
+      if (was && window.rustyac && window.rustyac.orbitBy) window.rustyac.orbitBy(e.clientX - was.x, e.clientY - was.y);
+      mouse('mousemove', e.clientX, e.clientY, 2);
+    }
+    else if (pointers.size === 2) {
+      const now = spread();
+      // (the wheel's notch is one step; about 40 px of pinch is one)
+      if (Math.abs(now - pinch) > 40) {
+        wheel(now > pinch ? -1 : 1);
+        if (window.rustyac && window.rustyac.zoomBy) window.rustyac.zoomBy(now > pinch ? 1 : -1);
+        pinch = now;
+      }
+    }
+  });
+  const end = (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    const had = pointers.size;
+    pointers.delete(e.pointerId);
+    if (had === 1 && turning) {
+      mouse('mouseup', e.clientX, e.clientY, 0);
+      turning = false;
+      const now = performance.now();
+      if (now - lastTap < 320) {
+        // a double tap: two quick right clicks bring the camera back
+        if (window.rustyac && window.rustyac.orbitReset) window.rustyac.orbitReset();
+        for (let i = 0; i < 2; i++) {
+          mouse('mousedown', e.clientX, e.clientY, 2);
+          mouse('mouseup', e.clientX, e.clientY, 0);
+        }
+      }
+      lastTap = now;
+    }
+  };
+  view.addEventListener('pointerup', end);
+  view.addEventListener('pointercancel', end);
+}
+
 if (enabled) {
   const start = () => {
+    cameraGestures();
     const root = build();
     // shown while a drive runs: the page hides its menu then
     const menu = document.getElementById('menu');
