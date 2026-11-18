@@ -1,6 +1,6 @@
 # Graphics: before and after
 
-`before/` and `after/` each hold 72 shots now (3 tracks x 4 cars x 6 looks: day, sunset and night, dry and in rain). `before/` is the build at commit `a97f1e0` (with static reflections: that build blacks out with live cube-map faces), `after/` the current one. The same 36 shots each:
+`before/` and `after/` each hold 72 shots now (JPEG) (3 tracks x 4 cars x 6 looks: day, sunset and night, dry and in rain). `before/` is the build at commit `a97f1e0` (with static reflections: that build blacks out with live cube-map faces), `after/` the current one. The same 36 shots each:
 3 tracks (drift, nevadadrift, mount_akina_2017) × 4 cars (GT-R, Huracán Performante, Lancer Evo VI, Skyline R34)
 × day / sunset / night in rain, High preset (4096 shadow map, 4× MSAA, live cube-map reflections), 1280×720 on an M4 (Metal).
 `compare/` has four side-by-side pairs (left before, right after).
