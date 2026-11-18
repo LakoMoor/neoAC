@@ -119,6 +119,7 @@ impl Session {
 
     /// As [`Session::with_skin`], with the player's `assists.ini` (as the launcher writes it):
     /// ABS, traction and stability control, the gearbox, the blip, the damage and the rest.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_assists(car: &str, track: &str, layout: &str, auto_shifter: bool, spawn: &str, sessions: Option<&str>, skin: Option<&str>, assists_text: Option<&str>) -> Result<Session, String> {
         let mut setup = crate::content::setup(car, track, layout, auto_shifter, spawn);
         setup.player_skin = skin.filter(|s| !s.is_empty()).map(str::to_string);

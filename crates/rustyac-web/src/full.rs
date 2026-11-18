@@ -318,8 +318,8 @@ impl GuiLoop {
         let pivot = [body[0], body[1] + 0.6, body[2]];
         let mut out = if self.orbit == [0.0; 2] { frame } else { orbit_frame(frame, pivot, self.orbit[0], self.orbit[1]) };
         if (self.zoom - 1.0).abs() > 1e-3 {
-            for i in 0..3 {
-                out.matrix[3][i] = pivot[i] + (out.matrix[3][i] - pivot[i]) * self.zoom;
+            for (eye, centre) in out.matrix[3].iter_mut().zip(pivot) {
+                *eye = centre + (*eye - centre) * self.zoom;
             }
         }
         out
