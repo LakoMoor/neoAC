@@ -1,0 +1,110 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>neoAC demo: drive in your browser</title>
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<style>
+:root{--bg:#07080b;--panel:#0f1117;--line:#232734;--text:#e9ecf3;--mute:#9aa3b5;--accent:#ff3b30;--accent2:#ff8a3d;--ok:#35d07f}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:16px/1.55 Inter,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+body{background:radial-gradient(900px 480px at 80% -10%,#3a1410 0%,transparent 60%),radial-gradient(700px 420px at 0% 0%,#18202f 0%,transparent 60%),var(--bg)}
+a{color:inherit}
+.wrap{max-width:1040px;margin:0 auto;padding:20px max(18px,env(safe-area-inset-right)) 40px max(18px,env(safe-area-inset-left))}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 0 26px}
+.logo{display:flex;align-items:center;gap:10px;font:800 22px/1 system-ui,sans-serif;letter-spacing:-.02em;text-decoration:none}
+.logo b{color:var(--accent)}.logo img{width:30px;height:30px;border-radius:8px}
+.back{font-size:14px;color:var(--mute);text-decoration:none}.back:hover{color:var(--text)}
+h1{font:800 clamp(30px,6vw,52px)/1.06 system-ui,sans-serif;letter-spacing:-.03em;margin:0 0 12px}
+.grad{background:linear-gradient(95deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.lead{color:var(--mute);font-size:18px;max-width:600px;margin:0 0 26px}
+.picks{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px}
+.card{position:relative;border-radius:18px;overflow:hidden;border:1px solid var(--line);background:var(--panel);aspect-ratio:16/10;display:flex;align-items:flex-end}
+.card img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.card::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,#000d 0%,#0003 55%,transparent)}
+.card .t{position:relative;z-index:1;padding:16px 18px}
+.card small{display:block;font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:#ffb089}
+.card h3{margin:2px 0 0;font-size:20px;line-height:1.2}
+.card .tick{position:absolute;z-index:1;top:12px;right:12px;width:26px;height:26px;border-radius:50%;background:var(--ok);display:grid;place-items:center;font-weight:800;color:#04210f;font-size:15px}
+.go{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:34px}
+.play{display:inline-flex;align-items:center;justify-content:center;gap:12px;padding:20px 44px;border-radius:16px;font:800 22px/1 system-ui,sans-serif;letter-spacing:.01em;color:#fff;text-decoration:none;background:linear-gradient(95deg,var(--accent),var(--accent2));box-shadow:0 18px 44px -14px #ff3b30aa;transition:.15s;min-width:min(100%,260px)}
+.play:hover{transform:translateY(-2px)}.play:active{transform:scale(.98)}
+.size{color:var(--mute);font-size:14px;max-width:360px}
+.size b{color:var(--text)}
+h2{font:700 13px/1 system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0 0 14px}
+.how{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:34px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px 22px}
+.box h3{margin:0 0 12px;font-size:18px}
+.pads{display:flex;gap:10px;align-items:flex-end;margin-bottom:14px}
+.pad{border:2px solid #ffffff33;border-radius:12px;background:#ffffff0d;display:grid;place-items:center;font:700 12px system-ui;color:#ffffffcc}
+.pad.s{width:44px;height:44px}.pad.g{width:44px;height:84px;background:#ff3b30aa;border-color:#ff3b30}.pad.b{width:60px;height:58px}
+.sp{flex:1}
+.box ul{margin:0;padding:0;list-style:none;display:grid;gap:9px;color:var(--mute);font-size:15px}
+.box li b{color:var(--text)}
+kbd{font:600 12px ui-monospace,monospace;background:#ffffff14;border:1px solid #ffffff26;border-bottom-width:2px;border-radius:6px;padding:2px 7px;color:var(--text)}
+.rotate{display:none;margin:0 0 18px;padding:12px 16px;border-radius:12px;background:#ff8a3d1f;border:1px solid #ff8a3d55;color:#ffcfa8;font-size:14.5px}
+.credit{color:var(--mute);font-size:13.5px;border-top:1px solid var(--line);padding-top:20px}
+.credit a{color:#ffb089}
+details{margin-top:10px}summary{cursor:pointer;color:var(--mute);font-size:13.5px}
+@media(max-width:760px){.picks,.how{grid-template-columns:1fr}.card{aspect-ratio:16/8}.play{width:100%}}
+@media(pointer:coarse) and (orientation:portrait){.rotate{display:block}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="logo" href="../"><img src="../favicon.svg" alt=""><span>neo<b>AC</b></span></a>
+    <a class="back" href="../">← Back to the site</a>
+  </header>
+
+  <h1>Take a classic <span class="grad">for a drive.</span></h1>
+  <p class="lead">A real driving simulator in your browser: tyres, gears and weight, the way Assetto Corsa's physics does them. Nothing to install.</p>
+
+  <div class="rotate">📱 Turn your phone sideways to drive.</div>
+
+  <div class="picks">
+    <div class="card"><img src="img/car.jpg" alt="Mercedes-Benz 300 SEL 6.3"><span class="tick">✓</span><div class="t"><small>Your car</small><h3>Mercedes-Benz 300 SEL 6.3</h3></div></div>
+    <div class="card"><img src="img/track.jpg" alt="Nevada Drift"><span class="tick">✓</span><div class="t"><small>Your track</small><h3>Nevada Drift</h3></div></div>
+  </div>
+
+  <div class="go">
+    <a class="play" id="play" href="play.html?car=mercedes_300sel&amp;track=nevadadrift&amp;go=1">▶ Play</a>
+    <p class="size">First start downloads <b>about 95 MB</b> once, then it opens at once. Best on Wi‑Fi.</p>
+  </div>
+
+  <h2>How to drive</h2>
+  <div class="how">
+    <div class="box">
+      <h3>On a phone or tablet</h3>
+      <div class="pads"><div class="pad s">◀</div><div class="pad s">▶</div><div class="sp"></div><div class="pad b">BRAKE</div><div class="pad g">GAS</div></div>
+      <ul>
+        <li>Hold <b>GAS</b> to go and <b>BRAKE</b> to stop.</li>
+        <li>Steer with the arrows, or press <b>Tilt</b> and turn the phone like a wheel.</li>
+        <li><b>View</b> changes the camera. <b>✕</b> leaves.</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>With a keyboard</h3>
+      <ul>
+        <li><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or the <kbd>↑</kbd> <kbd>←</kbd> <kbd>↓</kbd> <kbd>→</kbd> keys: gas, steer, brake.</li>
+        <li><kbd>C</kbd> changes the camera, <kbd>H</kbd> is the handbrake.</li>
+        <li>A gamepad works too. The gearbox is automatic.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="credit">
+    <p>This is a short preview of <a href="../">neoAC</a>, a free, open-source rebuild of Assetto Corsa's engine. It looks simpler than the desktop version and has no sound.</p>
+    <p>The car and the track are free community mods from <a href="https://assettocorsa.club/">assettocorsa.club</a>, shown with thanks to their authors:
+      <a href="https://assettocorsa.club/mods/auto/mercedes-benz-300-sel-63.html">Mercedes-Benz 300 SEL 6.3</a> (physics by Dmitrii A) and
+      <a href="https://assettocorsa.club/mods/tracks/nevada-drift.html">Nevada Drift</a>.
+      More are on the <a href="https://assettocorsa.club/mods/auto/">cars</a> and <a href="https://assettocorsa.club/mods/tracks/index.html">tracks</a> pages. All rights belong to their authors.</p>
+    <details><summary>Advanced: the full menu</summary>
+      <p><a href="play.html?simple=0">Open the full browser launcher</a> (for testing; it has every setting and is not simple).</p>
+    </details>
+  </div>
+</div>
+</body>
+</html>

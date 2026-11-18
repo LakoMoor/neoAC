@@ -229,3 +229,18 @@ footer { border-top: 1px solid var(--line); padding-top: 10px; color: var(--dim)
   text-align: right;
 }
 .refusal .detail { color: var(--dim); font-size: 12px; }
+
+/* a plain drive (?go=1): nothing but the picture, the speed and the lap */
+body.simple #gear, body.simple #corner, body.simple #hud-info, body.simple #hud-aids, body.simple #hud-perf, body.simple #keys { display: none !important; }
+body.simple #loading {
+  inset: 0; left: 0; bottom: 0; transform: none; width: auto; border-radius: 0; padding: 24px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  background: radial-gradient(900px 500px at 50% 30%, #1b2431, #0b0e13 70%);
+  font-size: 15px; color: #cfd6df; z-index: 40;
+}
+body.simple #loading[hidden] { display: none; }
+body.simple #loading::before { content: "neoAC"; font: 800 34px/1 system-ui, sans-serif; letter-spacing: -0.02em; color: #fff; margin-bottom: 26px; }
+body.simple #loading-text { max-width: 520px; margin: 0 0 16px; color: #aab4c0; }
+body.simple #loading-progress { width: min(420px, 80vw); height: 10px; border-radius: 6px; background: #232b36; }
+body.simple #loading-bar { background: linear-gradient(90deg, #ff3b30, #ff8a3d); border-radius: 6px; }
+body.simple #loading-stall { margin-top: 18px; }

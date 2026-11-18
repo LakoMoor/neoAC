@@ -91,6 +91,17 @@ function build() {
   pad(tops, 'up', 'Gear +', '', [['KeyE', 'e']]);
   pad(tops, 'cam', 'View', '', [['KeyC', 'c']]);
   pad(tops, 'hand', 'Handbrake', '', [['KeyH', 'h']]);
+  const exit = document.createElement('div');
+  exit.className = 'pad exit';
+  exit.textContent = '✕';
+  exit.style.minWidth = '44px';
+  exit.addEventListener('click', () => {
+    if (confirm('Leave the drive?')) {
+      window.onbeforeunload = null;
+      location.href = './';
+    }
+  });
+  tops.appendChild(exit);
 
   // tilt steering: the phone is the wheel (gamma when held sideways)
   let tiltOn = false;

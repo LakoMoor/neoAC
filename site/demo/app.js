@@ -242,7 +242,7 @@ async function openPack(base) {
     // from: resume at this byte (HTTP Range); fresh: not from the browser's storage
     async open(path, { from = 0, fresh = false } = {}) {
       const entry = entries.get(path.toLowerCase());
-      if (!entry) throw new Error(`${path} is not in the preview pack`);
+      if (!entry) throw Object.assign(new Error(`${path} is not in the preview pack`), { missing: true });
       const discard = async () => {
         if (cache) await cache.removeEntry(entry.sha256).catch(() => {});
       };
@@ -732,7 +732,8 @@ async function loadFile(path, done) {
       return;
     } catch (error) {
       const why = String(error && error.message ? error.message : error);
-      if (source.kind !== 'pack') {
+      // (a file the pack does not hold is not a flaky download: no retries)
+      if (source.kind !== 'pack' || (error && error.missing)) {
         await restart();
         throw error;
       }
@@ -2572,6 +2573,8 @@ async function useFolder(handle, remember) {
 
 // AC's launcher theme (web/launcher.js) is the page. The URL test hooks of a drive without it
 // (?go=1, ?join, ?selftest, ?launcher=0) still use the page's own controls, kept hidden.
+// A plain drive (?go=1, or ?simple=1): no settings, no debug lines, a friendly loading screen.
+if (params.get('go') === '1' || params.get('simple') === '1') document.body.classList.add('simple');
 const launcherMode = params.get('launcher') !== '0' && !['go', 'join', 'selftest'].some((key) => params.has(key));
 
 // The launcher on the source in state.source (its drives run in this page).
