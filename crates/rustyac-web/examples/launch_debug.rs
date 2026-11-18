@@ -24,7 +24,7 @@ fn main() {
     let mut n = 0;
     while t < seconds {
         s.advance(dt).expect("advance");
-        t += dt as f64;
+        t += dt;
         n += 1;
         if n % 30 == 0 {
             let v = s.view();

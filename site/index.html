@@ -105,6 +105,18 @@ h2{font-size:clamp(32px,5vw,56px);margin:14px 0 14px}
 .gal .shot img{height:100%;object-fit:cover}
 @media(max-width:800px){.gal .shot{grid-column:span 12!important}}
 
+/* demo */
+.demo{display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
+@media(max-width:900px){.demo{grid-template-columns:1fr}}
+.demo-main,.demo-credit{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:26px}
+.demo-main{background:radial-gradient(700px 240px at 0 0,color-mix(in srgb,var(--accent) 18%,transparent),transparent),var(--panel)}
+.demo-cta{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px}
+.demo ul{margin:0;padding-left:20px;color:var(--mute);font-size:15px;display:grid;gap:9px}
+.demo-credit h3{font-size:20px;margin-bottom:10px}
+.demo-credit p{color:var(--mute);font-size:14.5px;margin:0 0 12px}
+.demo-credit a{color:var(--accent2)}
+.demo-credit .note{margin:14px 0 0;font-size:13px}
+
 /* status */
 .status{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media(max-width:800px){.status{grid-template-columns:1fr}}
@@ -157,6 +169,7 @@ dialog button{position:absolute;top:-14px;right:-14px;width:38px;height:38px;bor
     <div class="links">
       <a href="#features">Features</a>
       <a href="#showcase">Showcase</a>
+      <a href="#demo">Demo</a>
       <a href="#status">Status</a>
       <a href="#run">Run it</a>
       <a class="btn primary" href="https://github.com/LakoMoor/neoAC">GitHub</a>
@@ -235,6 +248,37 @@ dialog button{position:absolute;top:-14px;right:-14px;width:38px;height:38px;bor
     </div>
   </section>
 
+  <section id="demo">
+    <div class="eyebrow">Try it now</div>
+    <h2 class="reveal">Play in your <span class="grad">browser,</span> on your phone.</h2>
+    <p class="sub reveal">A small preview of the physics, running as WebAssembly: one free car on one free track, with on-screen controls for touch screens. No install, no game files of yours needed.</p>
+    <div class="demo reveal">
+      <div class="demo-main">
+        <div class="demo-cta">
+          <a class="btn primary" href="demo/?car=mercedes_300sel&amp;track=nevadadrift&amp;go=1">▶ Play the demo</a>
+          <a class="btn" href="demo/">Choose car and track</a>
+        </div>
+        <ul class="demo-list">
+          <li><b>Phone or tablet:</b> hold the phone sideways. Left and right pads steer, GAS and BRAKE are on the right, and the <b>Tilt</b> button turns the phone into a steering wheel.</li>
+          <li><b>Keyboard:</b> arrows or WASD to drive, C changes the view, Space/E and Ctrl/Q change gears, H is the handbrake.</li>
+          <li>About <b>95 MB</b> is downloaded the first time (then kept in your browser). Use Wi‑Fi.</li>
+          <li>It is a <b>preview</b>: a simple picture, no sound, not the look of the desktop build above.</li>
+        </ul>
+      </div>
+      <div class="demo-credit">
+        <h3>Content in the demo</h3>
+        <p>Free community mods, from <a href="https://assettocorsa.club/">assettocorsa.club</a>. All rights belong to their authors; they are shown here only so the demo can run.</p>
+        <ul>
+          <li><b>Car:</b> <a href="https://assettocorsa.club/mods/auto/mercedes-benz-300-sel-63.html">Mercedes-Benz 300 SEL 6.3</a>, physics by Dmitrii A</li>
+          <li><b>Track:</b> <a href="https://assettocorsa.club/mods/tracks/nevada-drift.html">Nevada Drift (Nevada Freight Depot)</a></li>
+          <li>More cars: <a href="https://assettocorsa.club/mods/auto/">assettocorsa.club/mods/auto</a></li>
+          <li>More tracks: <a href="https://assettocorsa.club/mods/tracks/index.html">assettocorsa.club/mods/tracks</a></li>
+        </ul>
+        <p class="note">If you are an author and want your work removed, open an issue on GitHub and it will be taken down.</p>
+      </div>
+    </div>
+  </section>
+
   <section id="status">
     <div class="eyebrow">Honest status</div>
     <h2 class="reveal">A <span class="grad">preview,</span> not a finished game.</h2>
@@ -249,7 +293,7 @@ dialog button{position:absolute;top:-14px;right:-14px;width:38px;height:38px;bor
       </ul></div>
       <div class="box todo reveal"><h3>Not yet</h3><ul>
         <li>Linux is only checked to compile, not tested running</li>
-        <li>Gamepad support and Python apps</li>
+        <li>Gamepad support, Python apps and sound in the browser demo</li>
         <li>Turn signals: the base game has none, and no car here defines them</li>
         <li>Sound is still approximate</li>
         <li>Hosting a server from inside the game</li>

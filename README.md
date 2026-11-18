@@ -21,6 +21,10 @@ Rust · wgpu (Metal / Vulkan) · own launcher · own sound mixer · no Wine, no 
 >
 > Not affiliated with Kunos Simulazioni or 505 Games. No game files are included: you need your **own legal copy of Assetto Corsa 1.16**.
 
+## Try it in the browser
+
+A small **[browser demo](https://lakomoor.github.io/neoAC/#demo)** runs the physics as WebAssembly with on-screen controls for phones (pads and tilt steering). Its car and track are free community mods from [assettocorsa.club](https://assettocorsa.club/); credits are on the site.
+
 ## Screenshots
 
 | | |

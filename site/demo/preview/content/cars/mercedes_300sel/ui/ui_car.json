@@ -1,0 +1,125 @@
+{
+  "name": "Mercedes-Benz 300 SEL 6.3",
+  "brand": "Mercedes-Benz",
+  "description": "The Mercedes-Benz 300 SEL 6.3 was a large luxury car built by Mercedes Benz from 1968 to 1972. It featured the company&#39;s powerful 6.3-litre M100 V8 from the luxurious 600 limousine installed in the normally six-cylinder powered Mercedes Benz 300 SEL. The result was a nearly 2-tonne saloon with performance similar to most dedicated sports cars and American muscle cars of the era. At the time of it&#39;s release it was the world&#39;s fastest four door car.",
+  "tags": [
+    "rwd",
+    "vintage",
+    "historic",
+    "V8"
+  ],
+  "class": "street",
+  "specs": {
+    "bhp": "250 bhp",
+    "torque": "500Nm",
+    "weight": "1765kg",
+    "topspeed": "221 km/h",
+    "acceleration": "7.1sec",
+    "pwratio": "7.06kg/cv"
+  },
+  "torqueCurve": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      500.0,
+      229.032258064516
+    ],
+    [
+      1000.0,
+      339.784946236559
+    ],
+    [
+      1500.0,
+      409.677419354839
+    ],
+    [
+      2000.0,
+      459.139784946237
+    ],
+    [
+      2500.0,
+      484.94623655914
+    ],
+    [
+      2800.0,
+      500.0
+    ],
+    [
+      3000.0,
+      497.849462365591
+    ],
+    [
+      3500.0,
+      479.569892473118
+    ],
+    [
+      4000.0,
+      444.086021505376
+    ],
+    [
+      4500.0,
+      389.247311827957
+    ],
+    [
+      5000.0,
+      319.354838709677
+    ]
+  ],
+  "powerCurve": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      500.0,
+      17.2930170813518
+    ],
+    [
+      1000.0,
+      51.3107361287057
+    ],
+    [
+      1500.0,
+      92.7977395492257
+    ],
+    [
+      2000.0,
+      138.6688881453
+    ],
+    [
+      2500.0,
+      183.078655016189
+    ],
+    [
+      2800.0,
+      211.413222910047
+    ],
+    [
+      3000.0,
+      225.539912920165
+    ],
+    [
+      3500.0,
+      253.468541445916
+    ],
+    [
+      4000.0,
+      268.244734445006
+    ],
+    [
+      4500.0,
+      264.510092258423
+    ],
+    [
+      5000.0,
+      241.127984655468
+    ]
+  ],
+  "year": 1968,
+  "country": "Germany",
+  "author": "physics by Dmitrii A",
+  "url": "http://assettocorsa.club/mods/auto/mercedes-benz-300-sel-63.html",
+  "version": "1.0"
+}

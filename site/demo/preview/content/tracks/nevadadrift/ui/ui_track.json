@@ -1,0 +1,12 @@
+{
+	"name": "Nevada Freight Depot",
+	"description": "Skidpad and drift area",
+	"tags" : ["drift"],
+	"geotags": ["lat", "lon"],
+	"country": "United States",
+	"city": "Las Vegas",
+	"length": "1000",
+	"width": "300",
+	"pitboxes": "6",
+	"run": "Free"
+}
