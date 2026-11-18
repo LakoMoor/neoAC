@@ -39,9 +39,11 @@ fn main() {
             // keys with the straight flag (0) steer the car to its starting heading
             if keys.contains(&0) {
                 let e = heading(&s.view()) - h0;
-                if e > 0.01 {
+                // (a dead band and only a tap now and then: a rear-driven car spins when the heading is chased)
+                let tap = (t.get() * 60.0) as u64 % 6 == 0;
+                if e > 0.08 && tap {
                     k.push(LEFT);
-                } else if e < -0.01 {
+                } else if e < -0.08 && tap {
                     k.push(RIGHT);
                 }
             }
@@ -58,7 +60,7 @@ fn main() {
     let (mut t100, mut t200, mut last_gear, mut shifts) = (None, None, 0, Vec::new());
     let start = t.get();
     let mut dist = 0.0f64;
-    run(&mut s, 8.0, &[UP, 0], &mut |now, v| {
+    run(&mut s, 30.0, &[UP, 0], &mut |now, v| {
         dist += v.speed_ms as f64 / 60.0;
         if t100.is_none() && v.speed_kmh >= 100.0 {
             t100 = Some(now - start);
@@ -72,7 +74,7 @@ fn main() {
         }
     });
     let v = s.view();
-    println!("launch: 0-100 km/h {}, 0-200 km/h {}, after 8 s {:.0} km/h in gear {} ({:.0} m)", t100.map_or("n/a".into(), |t| format!("{t:.2} s")), t200.map_or("n/a".into(), |t| format!("{t:.2} s")), v.speed_kmh, v.gear - 1, dist);
+    println!("launch: 0-100 km/h {}, 0-200 km/h {}, after 30 s {:.0} km/h in gear {} ({:.0} m)", t100.map_or("n/a".into(), |t| format!("{t:.2} s")), t200.map_or("n/a".into(), |t| format!("{t:.2} s")), v.speed_kmh, v.gear - 1, dist);
     for line in shifts.iter().take(10) {
         println!("  {line}");
     }
