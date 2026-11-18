@@ -1489,6 +1489,10 @@ FILTER=default
                 }
             }
             out[60] = self.lamp_strength.max(0.4) * fade.max(0.35);
+            out[61] = if std::env::var_os("RUSTYAC_DEPTH_DEBUG").is_some() { 1.0 } else { 0.0 };
+            // the scene's depth range, for reading its depth back into positions
+            out[62] = frame.near;
+            out[63] = self.track_look.filter(|_| driving.mode == CameraMode::Track).map_or(self.plain_look, |l| (l.0, l.1, l.2)).0;
             self.lamps = out;
             if std::env::var_os("RUSTYAC_LAMPS_TRACE").is_some() && (self.frames.is_multiple_of(120) || (fade > 0.0 && fade < 1.0 && self.frames.is_multiple_of(6))) {
                 eprintln!("fade {fade:.2}");

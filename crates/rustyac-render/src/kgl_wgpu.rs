@@ -323,6 +323,7 @@ struct Replay {
     pipelines: HashMap<PipelineKey, Option<Rc<wgpu::RenderPipeline>>>,
     blits: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     depth_copy: Option<wgpu::RenderPipeline>,
+    depth_copy_ms: Option<wgpu::RenderPipeline>,
     warned: std::collections::HashSet<String>,
 }
 
@@ -344,6 +345,8 @@ pub struct Kgl {
     pub video: KglVideoSettings,
     pub screen_render_target: KglRenderTarget,
     pub screen_depth_target: KglRenderTarget,
+    /// the largest depth texture a draw went into since the last present: the scene's own
+    scene_depth: RefCell<Option<Rc<Tex>>>,
     bound: RefCell<Bound>,
     replay: RefCell<Replay>,
     dummy_2d: wgpu::TextureView,
@@ -498,6 +501,7 @@ impl Kgl {
             video,
             screen_render_target: KglRenderTarget::default(),
             screen_depth_target: KglRenderTarget::default(),
+            scene_depth: RefCell::new(None),
             bound: RefCell::new(Bound {
                 blend: 0,
                 depth: 0,
@@ -525,6 +529,7 @@ impl Kgl {
                 pipelines: HashMap::new(),
                 blits: HashMap::new(),
                 depth_copy: None,
+                depth_copy_ms: None,
                 warned: Default::default(),
             }),
             dummy_2d,
@@ -1554,14 +1559,17 @@ impl Kgl {
             })
         });
         let view = target.create_view(&Default::default());
+        // (a multisampled depth, the screen's, is read at its first sample)
+        let ms = t.samples > 1;
         let pipeline = {
             let mut replay = self.replay.borrow_mut();
-            replay
-                .depth_copy
+            let slot = if ms { &mut replay.depth_copy_ms } else { &mut replay.depth_copy };
+            slot
                 .get_or_insert_with(|| {
+                    let kind = if ms { "texture_depth_multisampled_2d" } else { "texture_depth_2d" };
                     let source = format!(
                         "{FULLSCREEN_VS}
-                        @group(0) @binding(0) var src: texture_depth_2d;
+                        @group(0) @binding(0) var src: {kind};
                         @fragment fn fs(v: V) -> @location(0) vec4<f32> {{
                             return vec4<f32>(textureLoad(src, vec2<i32>(v.p.xy), 0), 0.0, 0.0, 1.0);
                         }}"
@@ -1621,6 +1629,7 @@ impl Kgl {
                     @group(0) @binding(1) var smp: sampler;
                     struct Gain {{ k: vec4<f32>, r: vec4<f32>, a: array<vec4<f32>, 24> }};
                     @group(0) @binding(2) var<uniform> gain: Gain;
+                    @group(0) @binding(3) var dep: texture_2d<f32>;
                     fn cubic(t: f32) -> vec4<f32> {{
                         // Catmull-Rom weights of the four taps round a point t of the way between the middle two
                         let t2 = t * t; let t3 = t2 * t;
@@ -1664,6 +1673,17 @@ impl Kgl {
                         return vec4<f32>(clamp(out, vec3<f32>(0.0), vec3<f32>(1.0)) * gain.k.x, a);
                     }}
 
+fn wpos(p: vec2<i32>, dims: vec2<f32>) -> vec3<f32> {{
+    let uv = (vec2<f32>(p) + 0.5) / dims;
+    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let d = textureLoad(dep, p, 0).r;
+    // the scene's perspective (near and far from the camera), standard depth
+    let zn = gain.a[15].z; let zf = gain.a[15].w;
+    let z = zn * zf / (zf - d * (zf - zn));
+    let t = gain.a[0].w;
+    let dir = gain.a[2].xyz + gain.a[0].xyz * (ndc.x * t * gain.a[1].w) + gain.a[1].xyz * (ndc.y * t);
+    return gain.a[3].xyz + dir * z;
+}}
 fn boxcut(lo: vec3<f32>, ld: vec3<f32>, centre: vec3<f32>, half: vec3<f32>, tt: f32) -> f32 {{
     let inv = 1.0 / (ld + vec3<f32>(0.00001));
     let o = lo - centre;
@@ -1714,7 +1734,65 @@ fn boxcut(lo: vec3<f32>, ld: vec3<f32>, centre: vec3<f32>, half: vec3<f32>, tt: 
                             c = vec4<f32>(c.rgb + vec3<f32>(streak * rain), c.a);
                         }}
 
-if (gain.a[3].w > 0.0) {{
+if (gain.a[15].y > 0.5) {{
+    let d = textureLoad(dep, vec2<i32>(v.uv * vec2<f32>(textureDimensions(dep))), 0).r;
+    let sc = select(select(100.0, 1000.0, v.uv.x > 0.33), 10000.0, v.uv.x > 0.66);
+    c = vec4<f32>(vec3<f32>((1.0 - d) * sc), 1.0);
+}}
+let have_depth = textureDimensions(dep).x > 1u;
+if (gain.a[3].w > 0.0 && have_depth) {{
+    let dims = vec2<f32>(textureDimensions(dep));
+    let px = vec2<i32>(v.uv * dims);
+    let d0 = textureLoad(dep, px, 0).r;
+    let cam = gain.a[3].xyz;
+    if (d0 < 0.999999) {{
+        let hit = wpos(px, dims);
+        let ray = hit - cam;
+        let dist_c = length(ray);
+        if (dist_c < 70.0) {{
+            let hx = wpos(px + vec2<i32>(1, 0), dims);
+            let hy = wpos(px + vec2<i32>(0, 1), dims);
+            var n = normalize(cross(hy - hit, hx - hit));
+            // a depth edge (a leaf against the sky) has no normal of its own: face the camera
+            if (length(hx - hit) > 0.08 * dist_c + 0.3 || length(hy - hit) > 0.08 * dist_c + 0.3 || dot(n, n) < 0.5) {{ n = -ray / dist_c; }}
+            if (dot(n, -ray) < 0.0) {{ n = -n; }}
+            // the car's own body is not the world: a point in, or a ray through, its blocks is left alone
+            let hl = hit - gain.a[10].xyz;
+            let lh = vec3<f32>(dot(hl, gain.a[7].xyz), dot(hl, gain.a[8].xyz), dot(hl, gain.a[9].xyz));
+            let in_cab = all(abs(lh - gain.a[20].xyz) < gain.a[21].xyz + vec3<f32>(0.12));
+            let in_hood = all(abs(lh - gain.a[22].xyz) < gain.a[23].xyz + vec3<f32>(0.12));
+            // (the depth already hides what the body hides: only the body's own surface is left out)
+            let inside = select(0.0, 1.0, in_cab || in_hood);
+            if (inside < 1.0) {{
+                var lit = 0.0;
+                for (var i = 0; i < 2; i = i + 1) {{
+                    let lp = gain.a[4 + i].xyz;
+                    let dd = hit - lp;
+                    let dist = length(dd);
+                    let ldir = dd / max(dist, 0.001);
+                    let cosang = dot(ldir, gain.a[6].xyz);
+                    let core = smoothstep(0.93, 0.995, cosang);
+                    let skirt = smoothstep(0.6, 0.96, cosang);
+                    let fall = 1.0 / (1.0 + dist * dist * 0.012);
+                    // a surface facing the lamp takes the light; one turned away does not
+                    let facing = 0.2 + 0.8 * max(dot(n, -ldir), 0.0);
+                    lit = lit + (0.30 * skirt + 0.9 * core) * fall * facing;
+                }}
+                let warm = vec3<f32>(1.0, 0.9, 0.7);
+                let strength = 1.1 * (1.0 - exp(-lit * 1.4)) * (1.0 - inside) * (0.4 + 0.6 * gain.a[3].w);
+                let mx = max(c.r, max(c.g, c.b));
+                let mn = min(c.r, min(c.g, c.b));
+                let sat = (mx - mn) / max(mx, 0.02);
+                // tarmac takes the light as before (grey and dark); anything else, grass, walls, trees, is lit by its own colour
+                let road = select(0.0, clamp(1.0 - sat * 2.5, 0.0, 1.0) * (1.0 - smoothstep(0.28, 0.5, mx)), n.y > 0.8);
+                let by_colour = (vec3<f32>(0.06) + 1.1 * c.rgb) * (1.0 - smoothstep(0.7, 1.0, mx));
+                let by_road = vec3<f32>(0.35 + 0.65 * (1.0 - mx));
+                c = vec4<f32>(c.rgb + warm * strength * mix(by_colour, by_road, road), c.a);
+            }}
+        }}
+    }}
+}}
+if (gain.a[3].w > 0.0 && !have_depth) {{
     let ndc = vec2<f32>(v.uv.x * 2.0 - 1.0, 1.0 - v.uv.y * 2.0);
     let t = gain.a[0].w;
     let dir = normalize(gain.a[2].xyz + gain.a[0].xyz * (ndc.x * t * gain.a[1].w) + gain.a[1].xyz * (ndc.y * t));
@@ -1897,10 +1975,34 @@ if (gain.a[3].w > 0.0) {{
             let bytes: Vec<u8> = head.iter().chain(lamps.iter()).flat_map(|v| v.to_ne_bytes()).collect();
             self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("kgl present gain"), contents: &bytes, usage: wgpu::BufferUsages::UNIFORM })
         };
+        // the scene's depth, as a float texture, for the lights that fall on walls and trees
+        let scene_depth = if self.present_lamps.get()[15 * 4 + 1] > 0.5 || self.present_lamps.get()[3 * 4 + 3] > 0.0 {
+            let found = self.scene_depth.borrow().clone();
+            found.map(|t| self.depth_as_float(&t))
+        } else {
+            None
+        };
+        self.scene_depth.borrow_mut().take();
+        let no_depth = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("no depth"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let no_depth_view = no_depth.create_view(&Default::default());
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&source) }, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) }, wgpu::BindGroupEntry { binding: 2, resource: gain_buffer.as_entire_binding() }],
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&source) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: gain_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(scene_depth.as_ref().unwrap_or(&no_depth_view)) },
+            ],
         });
         let mut replay = self.replay.borrow_mut();
         let encoder = Kgl::encoder(&self.device, &mut replay);
@@ -1928,6 +2030,14 @@ if (gain.a[3].w > 0.0) {{
             return;
         }
         let samples = rtv.as_ref().or(dsv.as_ref()).map_or(1, |v| v.0.tex.samples);
+        // (a draw with a colour target: the shadow map is depth alone)
+        if let (Some(d), true) = (&dsv, rtv.is_some()) {
+            let mut best = self.scene_depth.borrow_mut();
+            let area = |t: &Tex| t.width as u64 * t.height as u64;
+            if d.0.tex.format == wgpu::TextureFormat::Depth32Float && best.as_ref().is_none_or(|b| area(&d.0.tex) >= area(b)) {
+                *best = Some(d.0.tex.clone());
+            }
+        }
         if let (Some(c), Some(d)) = (&rtv, &dsv) {
             if c.0.tex.samples != d.0.tex.samples || c.0.tex.width != d.0.tex.width || c.0.tex.height != d.0.tex.height {
                 drop(b);
