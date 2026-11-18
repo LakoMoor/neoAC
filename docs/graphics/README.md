@@ -146,6 +146,6 @@ mirrored in the wet road as a streak running towards the camera: `checks/lamps_g
 streaks lie on the wet tarmac; right: from behind and the side, only the beam on the road). The 24 night shots (`_night_rain`, `_night_dry`) were taken again with it.
 Frame rate with it, nevadadrift at night in rain with headlights, 1920x1080: 59.6 and 58.9 fps (the Mac was quiet this time).
 
-- `checks/night_rain_all_12.jpg`: all 12 track-and-car pairs at night in rain, seen from behind: the headlight beams lie on the road for every pair, and the tail lamps
-  glow red and are mirrored in the wet road on the Huracán, Lancer and (faintly) Skyline; the GT-R's tail lamps barely read, because their `lights.ini` colour is
-  not among the brightest entries the lamp model picks.
+- `checks/night_rain_all_12.jpg`: all 12 track-and-car pairs at night in rain, seen from behind: the headlight beams lie on the road for every pair and the
+  tail lamps glow red and are mirrored in the wet road on all four cars (the lamp model takes the brake lamps' colour at a third when the pedal is up, so the
+  GT-R's and Skyline's tail lamps read too).

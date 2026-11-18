@@ -1486,8 +1486,10 @@ FILTER=default
             if let Some(r) = model.rear {
                 put(&mut out, 13, world(r[0]), fade * seen_rear * 0.5);
                 put(&mut out, 14, world(r[1]), fade * seen_rear * 0.5);
-                put(&mut out, 18, model.rear_color_off, 0.0);
-                put(&mut out, 19, model.rear_color_off, 0.0);
+                // (the tail lamps with the headlights on and no brake: the dimmer colour, but never less than a third of the brake's)
+                let tail = [0, 1, 2].map(|k| model.rear_color_off[k].max(model.rear_color[k] * 0.35));
+                put(&mut out, 18, tail, 0.0);
+                put(&mut out, 19, tail, 0.0);
             }
             // the car cut-out of the pools: the body's extent from the model, a low block over the bonnet
             let (lo, hi) = (model.min, model.max);
