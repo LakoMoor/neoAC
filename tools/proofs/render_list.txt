@@ -1,0 +1,286 @@
+# Render oracle frames and sequences of Tasks 20-23, rebuilt from the reports' tables
+# (renderer_core.md, renderer_car.md, renderer_scene.md, renderer_leftovers.md, postfx.md) because the
+# batch scripts were lost with re/scratch. One case per line: name | render_oracle compare arguments.
+# POSE:<tape>:<frame> is replaced by a .pose cut from that tape frame (render_oracle pose-of).
+# RESIZE:<frame>:<W>x<H> resizes the window before that frame (RENDER_ORACLE_RESIZE).
+# GLARE:<0-5> and PP_QUALITY:<0-5> set video.ini's [POST_PROCESS] GLARE and QUALITY (RENDER_ORACLE_GLARE, _PP_QUALITY).
+# Which tape frame, --tape-from and --set frames each row used was in the lost scripts: those are
+# chosen anew here, so the call counts differ from the reports' while the proof (game = port) is the same.
+# Rows needing the reports' made-up car data files (22: 8, 18-20; 22c: 5, 16) are left out.
+# -- Task 20: one frame each
+r20_01 | --track spa --view chase
+r20_02 | --track monza --view chase
+r20_03 | --track magione --view chase
+r20_04 | --track ks_laguna_seca --view chase
+r20_05 | --track spa --view chase --car ks_ferrari_f2004 --pose POSE:oracle/audio/ks_ferrari_f2004/spa_launch.audiotape:0
+r20_06 | --track spa --view cockpit --car ks_ferrari_f2004 --pose POSE:oracle/audio/ks_ferrari_f2004/spa_kerb_strike.audiotape:200
+r20_07 | --track spa --view chase --sun 40 --car ks_ferrari_f2004 --pose POSE:oracle/audio/ks_ferrari_f2004/trk_lap.audiotape:600
+r20_08 | --track spa --view sun --car ks_ferrari_f2004 --pose POSE:oracle/audio/ks_ferrari_f2004/trk_lap.audiotape:600
+r20_09 | --track monza --view chase --car bmw_1m --pose POSE:oracle/render_tapes/bmw_1m/spa_launch.audiotape:0
+r20_10 | --track monza --view cockpit --car bmw_1m --pose POSE:oracle/render_tapes/bmw_1m/wc_stops.audiotape:300
+r20_11 | --track monza --view far --car bmw_1m --pose POSE:oracle/render_tapes/bmw_1m/trk_lap.audiotape:600
+r20_12 | --track monza --view chase --sun 40 --car bmw_1m --pose POSE:oracle/render_tapes/bmw_1m/wc_stops.audiotape:300
+r20_13 | --track magione --view chase --car bmw_m3_e30 --pose crates/rustyac-render/tests/data/e30_magione.pose
+r20_14 | --track magione --view cockpit --car bmw_m3_e30 --pose POSE:oracle/audio/bmw_m3_e30/wc_stops.audiotape:300
+r20_15 | --track magione --view sun --car bmw_m3_e30 --pose POSE:oracle/audio/bmw_m3_e30/trk_lap.audiotape:600
+r20_16 | --track magione --view chase --sun 40 --car bmw_m3_e30 --pose POSE:oracle/audio/bmw_m3_e30/wc_stops.audiotape:300
+r20_17 | --track ks_laguna_seca --view chase --car bmw_m3_e30 --pose POSE:oracle/render_tapes/bmw_m3_e30/spa_launch.audiotape:0
+r20_18 | --track ks_laguna_seca --view cockpit --car bmw_m3_e30 --pose POSE:oracle/audio/bmw_m3_e30/wc_stops.audiotape:500
+r20_19 | --track ks_laguna_seca --view chase --sun 40 --car ks_ferrari_f2004 --pose POSE:oracle/audio/ks_ferrari_f2004/trk_lap.audiotape:300
+r20_20 | --track ks_laguna_seca --view sun --sun 40 --car ks_ferrari_f2004 --pose POSE:oracle/audio/ks_ferrari_f2004/trk_lap.audiotape:900
+r20_21 | --track magione --view chase --car bmw_m3_e30 --pose crates/rustyac-render/tests/data/e30_magione.pose --shadow-size -1 --cubemap-size 0 --world-detail 0 --anisotropic 2
+# -- Task 21: whole cars, sequences driven by tapes
+r21_01 | --track spa --view dash --mirror 512 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 59
+r21_02 | --track magione --view onboard --mirror 512 --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 59
+r21_03 | --track monza --view onboard --car bmw_1m --tape oracle/render_tapes/bmw_1m/trk_lap.audiotape --frames 59
+r21_04 | --track monza --view dash --car ferrari_f40 --tape oracle/audio/ferrari_f40/trk_lap.audiotape --frames 39
+r21_05 | --track spa --view rear --sun 84 --car bmw_1m --tape oracle/render_tapes/bmw_1m/wc_stops.audiotape --frames 29 --set lights=1,brake=1@10,gear=-1@20
+r21_06 | --track spa --view front --sun 84 --car bmw_1m --tape oracle/render_tapes/bmw_1m/trk_lap.audiotape --frames 29 --set lights=1
+r21_07 | --track monza --view front --sun 84 --car ferrari_f40 --tape oracle/audio/ferrari_f40/trk_lap.audiotape --frames 49 --set lights=0,lights=1@20
+r21_08 | --track spa --view rear --car bmw_m3_e30 --tape oracle/render_tapes/bmw_m3_e30/spa_launch.audiotape --frames 29 --set flash=1@5,brake=1@15
+r21_09 | --track spa --view side --car bmw_1m --tape oracle/render_tapes/bmw_1m/wc_stops.audiotape --frames 89
+r21_10 | --track magione --view side --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/wc_stops.audiotape --frames 69
+r21_11 | --track spa --view chase --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_wall_high.audiotape --frames 59
+r21_12 | --track spa --view front --car bmw_1m --tape oracle/render_tapes/bmw_1m/spa_wall_slide.audiotape --frames 59
+r21_13 | --track spa --view chase --car bmw_m3_e30 --tape oracle/render_tapes/bmw_m3_e30/spa_wall_slide.audiotape --frames 59
+r21_14 | --track spa --view front --car bmw_1m --tape oracle/render_tapes/bmw_1m/spa_launch.audiotape --frames 9 --set damage=1:1:1:1:1
+r21_15 | --track spa --view chase --smoke 3 --mirror 512 --virtual-mirror --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_launch.audiotape --frames 419
+r21_16 | --track spa --view side --smoke 5 --car bmw_1m --tape oracle/render_tapes/bmw_1m/spa_launch.audiotape --frames 359
+r21_17 | --track spa --view chase --smoke 3 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_grass.audiotape --frames 119
+r21_18 | --track spa --view rear --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_launch.audiotape --tape-from 300 --frames 149
+r21_19 | --track monza --view rear --smoke 3 --car ferrari_f40 --tape oracle/audio/ferrari_f40/trk_lap.audiotape --frames 299
+r21_20 | --track monza --view chase --mirror 512 --virtual-mirror --car bmw_1m --tape oracle/render_tapes/bmw_1m/trk_lap.audiotape --frames 39
+r21_21 | --track magione --view dash --mirror 256 --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 39
+r21_22 | --track spa --view chase --cubemap-faces 6 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 29
+r21_23 | --track monza --view chase --cubemap-faces 2 --car bmw_1m --tape oracle/render_tapes/bmw_1m/trk_lap.audiotape --frames 29
+r21_24 | --track magione --view far --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 39
+r21_25 | --track spa --view side --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_kerb_strike.audiotape --frames 59
+r21_26 | --track imola --view dash --car ks_ferrari_488_gt3 --tape oracle/audio/ks_ferrari_488_gt3/trk_lap.audiotape --frames 39
+r21_27 | --track magione --view onboard --car ks_ferrari_250_gto --tape oracle/audio/ks_ferrari_250_gto/trk_kerb_strike.audiotape --frames 39
+# -- Task 22: weather, crowds, grooves, dashboards, mirrors, replay
+r22_01 | --track spa --weather 7_heavy_clouds --time-mult 400 --view chase --mirror 512 --virtual-mirror --cubemap-faces 2 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 179
+r22_02 | --track monza --weather 5_light_clouds --time-mult 2000 --world-detail 3 --view far --car bmw_1m --tape oracle/render_tapes/bmw_1m/trk_lap.audiotape --frames 119
+r22_03 | --track spa --weather 6_mid_clouds --view far
+r22_04 | --track spa --view chase --mirror 512 --virtual-mirror --cubemap-faces 2 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 119 --set laps=0,laps=4@40,laps=30@80
+r22_05 | --track imola --world-detail 3 --view far --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 89 --set laps=2
+r22_06 | --track monza --weather 4_mid_clear --view side --car bmw_1m --tape oracle/render_tapes/bmw_1m/trk_lap.audiotape --frames 89 --set laps=10
+r22_07 | --track ks_laguna_seca --loose --weather 6_mid_clouds --view chase
+r22_09 | --track imola --view dash --car ks_ferrari_488_gt3 --tape oracle/audio/ks_ferrari_488_gt3/trk_lap.audiotape --frames 29 --set tc=3,abs=5,air=12.7
+r22_10 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 29 --set tc=4,tc=0@15,air=31
+r22_11 | --track magione --view dash --car ks_lamborghini_aventador_sv --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 49 --set gear=-1,gear=0@12,gear=1@24,gear=4@36
+r22_12 | --track magione --view cockpit --car ks_mclaren_p1 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 39 --set wing=5,wing=18@10,wing=27@20,wing=33@30,air=5.5
+r22_13 | --track spa --view dash --car ks_ferrari_f138 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 39 --set kers=0,kers=0.5@15,kers=1@30,wing=3,wing=20@20
+r22_14 | --track spa --view dash --car ks_ferrari_sf70h --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 39 --set kers=1,kers=0@20
+r22_15 | --track spa --view chase --mirror-hq 4 --mirror-smoke --virtual-mirror --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_launch.audiotape --frames 59
+r22_16 | --track magione --weather 5_light_clouds --view cockpit --mirror-hq 4 --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 39
+r22_17 | --track monza --view chase --mirror-hq 2 --mirror 256 --smoke 3 --virtual-mirror --car ferrari_f40 --tape oracle/audio/ferrari_f40/trk_lap.audiotape --frames 59
+r22_21 | --track spa --view chase --smoke 3 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_launch.audiotape --frames 159 --set pause=1@40,pause=0@60,replay=1@80,rstatus=1@90,rscale=2@100
+r22_22 | --track monza --view side --car bmw_1m --tape oracle/render_tapes/bmw_1m/wc_stops.audiotape --frames 69 --set replay=1@20,pause=1@20,pause=0@40,rscale=2@40
+r22_23 | --track ks_nordschleife --layout nordschleife --view sky
+# -- Task 22c: the leftovers of the scene
+r22c_01 | --track spa --view chase --frames 3 --set ideal=1,ideal=0@2
+r22c_02 | --track imola --view chase --mirror-hq 4 --virtual-mirror --car ks_ferrari_488_gt3 --tape oracle/audio/ks_ferrari_488_gt3/trk_lap.audiotape --frames 39 --set ideal=1
+r22c_03 | --track mugello --view free --set ideal=1
+r22c_04 | --track ks_vallelunga --layout extended_circuit --view chase --set ideal=1
+r22c_06 | --track spa --view front --car ferrari_312t --tape oracle/render_tapes/lotus_49/spa_kerb_strike.audiotape --frames 9
+r22c_07 | --track spa --view chase --frames 159 --set tts=16000,tts=8200@40,pause=1@80,pause=0@85
+r22c_08 | --track ks_laguna_seca --view chase --frames 89 --set tts=8000,replay=1@30,replay=0@45,session=0@70
+r22c_09 | --track ks_drag --layout drag400 --view chase --frames 61 --set tts=6000
+r22c_10 | --track trento-bondone --view chase --frames 41 --set tts=6000
+r22c_11 | --track ks_nordschleife --layout nordschleife --view sky --frames 13 --set newsession=1@6,newsession=1@10
+r22c_12 | --track spa --view chase --smoke 3 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_grass.audiotape --frames 99 --set newsession=1@60
+r22c_13 | --track spa --view pit --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_launch.audiotape --frames 149 --set pitstate=1,pitstate=0@70
+r22c_14 | --track magione --view side --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/wc_stops.audiotape --frames 99 --set pit=1@20,pit=0@70,pitstate=1@30
+r22c_15 | --track imola --view pit --world-detail 4 --car ks_ferrari_488_gt3 --tape oracle/audio/ks_ferrari_488_gt3/trk_lap.audiotape --frames 19
+r22c_17 | --track spa --view gate --frames 13 --set gate=0,gate=1@4,gate=-1@8,gate=0@10,replay=1@12
+r22c_18 | --track imola --view chase --mirror-hq 4 --virtual-mirror --car ks_ferrari_488_gt3 --tape oracle/audio/ks_ferrari_488_gt3/trk_lap.audiotape --frames 19 --set gate=1
+# -- Task 23: MSAA and post-processing
+r23_01 | --track monza --view chase --aa 2
+r23_02 | --track monza --view side --aa 4 --car bmw_1m --tape oracle/render_tapes/bmw_1m/trk_lap.audiotape --frames 59 --set laps=10
+r23_03 | --track monza --view far --aa 8
+r23_04 | --track spa --view chase --aa 4 --mirror-hq 4 --mirror 512 --virtual-mirror --smoke 3 --cubemap-faces 2 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 59
+r23_05 | --track spa --view onboard --aa 8 --smoke 3 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_grass.audiotape --frames 59
+r23_06 | --track ks_laguna_seca --weather 6_mid_clouds --view chase --aa 4
+r23_07 | --track imola --view far --aa 2 --world-detail 3 --car ks_ferrari_488_gt3 --tape oracle/audio/ks_ferrari_488_gt3/trk_lap.audiotape --frames 39
+r23_08 | --track spa --view chase --aa 4 --frames 59 --set tts=8000,ideal=1
+r23_09 | --track spa --view chase --post
+r23_10 | --track spa --view chase --post --aa 4
+r23_11 | --track spa --view chase --post --fxaa --mirror 512 --virtual-mirror --smoke 3 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 39
+r23_12 | --track monza --view chase --post --aa 4 --smoke 3 --mirror-hq 4 --mirror 256 --car ferrari_f40 --tape oracle/audio/ferrari_f40/trk_lap.audiotape --frames 59
+r23_13 | --track imola --weather 6_mid_clouds --view dash --post --car ks_ferrari_488_gt3 --tape oracle/audio/ks_ferrari_488_gt3/trk_lap.audiotape --frames 39 --set lights=1
+r23_14 | --track spa --view chase --post --frames 59 --set tts=8000,ideal=1
+r23_15 | --track spa --view gate --post --aa 2 --frames 5 --set gate=0
+r23_16 | --track monza --view chase --post --ldr-levels
+r23_17 | --track monza --view chase --post --ldr-levels --fxaa
+r23_18 | --track ks_laguna_seca --weather 6_mid_clouds --view chase --post --aa 4 --fxaa
+r23_19 | --track spa --view chase --post --motion-blur 6 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 59
+r23_20 | --track monza --view side --post --aa 4 --motion-blur 12 --fxaa --car bmw_1m --tape oracle/render_tapes/bmw_1m/trk_lap.audiotape --frames 59 --set laps=10
+r23_21 | --track imola --view onboard --post --motion-blur 4 --mirror 512 --virtual-mirror --cubemap-faces 2 --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 59
+r23_22 | --track spa --view far --post --motion-blur 1 --aa 8 --smoke 3 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_grass.audiotape --frames 59
+r23_23 | --track spa --view chase --post --frames 59 --set tts=8000
+r23_24 | --track ks_laguna_seca --view chase --post --aa 4 --fxaa --frames 39 --set tts=8000
+# Task 43c: the Wings app's outlines and lift vectors (FormWings::onRenderNode), shown, hidden, shown again
+r43c_01 | --track magione --view chase --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 30 --set wingsapp=1,wingsapp=0@20,wingsapp=1@25
+# Task 43c: the Suspensions app's 3D lines (ACSuspension::renderWireframe) with its keys: Backspace, keypad 1, 4+5 (bits 3, 4), Ctrl; hidden, shown again
+r43c_02 | --track magione --view chase --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 30 --set susapp=1,suskeys=1@4,suskeys=0@6,suskeys=4@8,suskeys=0@9,suskeys=24@10,suskeys=0@11,suskeys=2@13,suskeys=0@14,susapp=0@20,susapp=1@25,suskeys=1@27,suskeys=0@28
+# Task 43c: the console's sets of the scene (the game's own lambdas and targets on its side)
+r43c_03 | --track magione --view chase --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 12 --set console=debugDamage:6@2,console=hideHead:1@3,console=graphicsOffset.y:0.2+graphicsPitchRotation:0.05@4,console=sunHeading:90+sunPitch:20@6,console=shadowBias:0.01@7,console=maxLayer:0@8,console=debugDirt:2+mirrorpos.y:0.5@9
+r43c_04 | --track magione --view dash --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 10 --set console=RPM_STEP:0.05+RPM_ZERO:-60+SPEED_STEP:0.1+SPEED_ZERO:-30@2,console=FUEL_STEP:2+FUEL_ZERO:10+FUEL_MIN:5+wATER_STEP:1@4,console=WATER_ZERO:20+WATER_MIN:30@5,console=lodDebug:1@8
+r43c_05 | --track magione --view chase --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 12 --set accg=1.2:0:0.8,console=headRoll:-40+headPitch:-30+headYaw:40+headMaxG:0.5@3,console=headFilter:0@8
+r43c_06 | --track spa --view chase --cubemap-faces 2 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 12 --set laps=30,console=hideGroove:1@4,console=hideGroove:0@9
+r44c_01 | --track magione --view chase --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 8 --set console=axisMode:1@2,console=axisMode:2@4,console=axisMode:0@6,console=axisMode:3@7
+# -- Task 47: triple screens (video.ini [CAMERA] MODE=TRIPLE, the triple_screen.ini of root.rs) in one 5760x1080 window
+r47_01 | --track spa --view chase --triple --size 5760x1080
+r47_02 | --track spa --view dash --mirror 512 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 59 --triple --size 5760x1080
+r47_03 | --track magione --view chase --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 8 --triple --size 5760x1080 --set console=axisMode:1@2,console=axisMode:2@4,console=axisMode:0@6
+# -- Task 47b: VR (video.ini [CAMERA] MODE=OPENVR, the openvr.ini of root.rs) on the stand-in OpenVR runtime: the window over both eyes
+r47b_01 | --track spa --view chase --vr --size 1280x720
+r47b_02 | --track spa --view dash --mirror 512 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 30 --vr --size 1280x720
+r47b_03 | --track magione --view chase --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 8 --vr --aa 4 --size 1280x720
+r47b_04 | --track spa --view chase --oculus --size 1280x720
+r47b_05 | --track spa --view dash --mirror 512 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 30 --oculus --size 1280x720
+r47b_06 | --track magione --view chase --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 8 --oculus --aa 4 --size 1280x720
+r47b_07 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 30 --set tts=3000 --vr --size 1280x720
+r47b_08 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 30 --set tts=3000 --oculus --size 1280x720
+# -- Task 47c: the camera keys in VR: the free camera (F7) and a camera beside the car seen through the headset
+r47c_01 | --track spa --view free --vr --size 1280x720
+r47c_02 | --track magione --view side --car bmw_m3_e30 --tape oracle/audio/bmw_m3_e30/trk_lap.audiotape --frames 8 --oculus --size 1280x720
+# -- Task 47c: room scale (Sim::isRoomVR, which nothing in acs.exe 1.16 sets, forced on both sides): the standing tracking space and [VR_ROOM] ROTATION=2
+r47c_03 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 8 --vr-room --size 1280x720
+# -- Task 47c: openvr.ini MOTION_TRACKER (the head seen from the left hand controller, the last generic tracker; a hand with no controller makes the head NaN in the game: not a row)
+r47c_04 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 8 --vr-tracker LEFT_HAND --size 1280x720
+r47c_05 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 8 --vr-tracker TRACKER --size 1280x720
+# -- Task Y3e: the heat shimmer that moves pixels: render_oracle's own test filter (default.ini, HEAT_PARTICLE_SHIMMER 100 times, made in the root; turns HEAT_SHIMMER on), the shimmer from frame 45
+ry3e_01 | --track spa --view chase --post --fxaa --size 1280x720 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_launch.audiotape --frames 52 --ppfilter rustyac_heat_x100
+# -- Task Y3e: VR with YEBIS (one YebisPP for both eyes, no shimmer, no chromatic aberration): plain, MSAA, FXAA
+ry3e_02 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 8 --vr --post --size 1280x720
+ry3e_03 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 8 --vr --post --aa 4 --size 1280x720
+ry3e_04 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 8 --oculus --post --size 1280x720
+ry3e_05 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 8 --oculus --post --fxaa --size 1280x720
+# -- Task Y5 step 0: the resize cases, YEBIS remade (Y3, Y3d-2, Y3e step 0.4, VR)
+ry5_01 | --track spa --view chase --post --fxaa --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --frames 20 RESIZE:10:1024x576
+ry5_02 | --track spa --view chase --triple --size 5760x1080 --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --frames 20 RESIZE:10:3840x720
+ry5_03 | --track spa --view chase --post --fxaa --size 1280x720 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_launch.audiotape --frames 56 --ppfilter rustyac_heat_x100 RESIZE:48:1024x576
+ry5_04 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 8 --vr --post --size 1280x720 RESIZE:4:1024x576
+ry5_05 | --track spa --view dash --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 8 --oculus --post --fxaa --size 1280x720 RESIZE:4:1024x576
+# -- Task Y5a: the glare's bloom (test filter rustyac_bloom: the default filter without star and ghost), by quality
+ry5a_01 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_bloom --frames 12 GLARE:3 PP_QUALITY:3
+ry5a_02 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_bloom --frames 8 GLARE:1
+ry5a_03 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_bloom --frames 8 GLARE:5 PP_QUALITY:3 RESIZE:3:1024x576
+ry5a_04 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_bloom --frames 8 GLARE:1 PP_QUALITY:3 RESIZE:3:1024x576
+ry5a_05 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_bloom --frames 8 --fxaa GLARE:3 PP_QUALITY:3
+# -- Task Y5b: the glare's star (test filter rustyac_star: the default filter with no ghost), GLARE 1/3/5, QUALITY 0 and 3, a resize, FXAA
+ry5b_01 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_star --frames 12 GLARE:3 PP_QUALITY:3
+ry5b_02 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_star --frames 8 GLARE:1
+ry5b_03 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_star --frames 8 GLARE:5 PP_QUALITY:3 RESIZE:3:1024x576
+ry5b_04 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_star --frames 8 GLARE:1 PP_QUALITY:3 RESIZE:3:1024x576
+ry5b_05 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_star --frames 8 --fxaa GLARE:3 PP_QUALITY:3
+# -- Task Y5c: every shipped filter but vintage (its library-shape star: Y5d) with the glare on, light shafts off: the ghost, hue/sepia, LINEARSAT, GHOST=0, the diaphragm's FOV turn
+ry5c_01 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter default --frames 12 GLARE:3 PP_QUALITY:3
+ry5c_02 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter default_bright --frames 12 GLARE:3 PP_QUALITY:3
+ry5c_03 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter default_dark --frames 12 GLARE:3 PP_QUALITY:3
+ry5c_04 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter blue_steel --frames 12 GLARE:3 PP_QUALITY:3
+ry5c_05 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter natural --frames 12 GLARE:3 PP_QUALITY:3
+ry5c_06 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter photographic --frames 12 GLARE:3 PP_QUALITY:3
+ry5c_07 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter movie --frames 12 GLARE:3 PP_QUALITY:3
+ry5c_08 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter sepia --frames 12 GLARE:3 PP_QUALITY:3
+ry5c_09 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter b&w --frames 12 GLARE:3 PP_QUALITY:3
+# -- Task Y5d: every shipped filter but vintage with the glare and light shafts on; the sun comes into the chase camera's view at frame 10 and leaves it at frame 167 (mask, radial passes, diffraction ring, MadT4 composite)
+ry5d_01 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter default --frames 175 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_02 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter default_bright --frames 175 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_03 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter default_dark --frames 175 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_04 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter blue_steel --frames 175 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_05 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter natural --frames 175 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_06 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter photographic --frames 175 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_07 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter movie --frames 175 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_08 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter sepia --frames 175 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_09 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter b&w --frames 175 GLARE:3 PP_QUALITY:3 RAYS:1
+# -- Task Y5d step 2: vintage, the library star (SunnyCross, eight lines, forced colour dispersion), BRIGHT_PASS=1 and a nine-tap bloom gaussian
+ry5d_10 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter vintage --frames 175 GLARE:3 PP_QUALITY:3 RAYS:1
+# -- Task Y5d step 3: the glare and light shafts in VR (both headset stand-ins, camera at the sun), the glare without eye adaptation, star streak counts 1, 5 and 12, the result blur off and halved
+ry5d_11 | --track spa --view sun --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 4 --vr --post --size 1280x720 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_12 | --track spa --view sun --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --frames 4 --oculus --post --size 1280x720 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_13 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter rustyac_aeoff --frames 40 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_14 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter rustyac_star1 --frames 40 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_15 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter rustyac_star5 --frames 40 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_16 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter rustyac_star12 --frames 40 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_17 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter rustyac_blur0 --frames 20 GLARE:3 PP_QUALITY:3 RAYS:1
+ry5d_18 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter rustyac_blur05 --frames 20 GLARE:3 PP_QUALITY:3 RAYS:1
+# -- Task Y6 step 0.2: PP_QUALITY 5 with GLARE 5 (no result blur: the double is no wider than the glare; the bright pass
+#    reads the frame itself) and an odd size where w*(1/w) is not 1 (the ghost's second-pass rectangle, the quad's
+#    positions, the tone map's glare rectangle)
+ry6_01 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter default --frames 40 GLARE:5 PP_QUALITY:5 RAYS:1
+ry6_02 | --track spa --view chase --post --size 1127x633 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter default --frames 40 GLARE:5 PP_QUALITY:5 RAYS:1
+# -- Task Y6: YEBIS's depth of field (camera dofFactor 1 at the given focus; video.ini DOF quality), quality 1-4,
+#    F-numbers 12/4/2 (rustyac_f4/rustyac_f2 filters), near and far focus, with and without glare, an odd size
+ry6_03 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter default --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:3,5
+ry6_04 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f2 --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:3,2
+ry6_05 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:2,5
+ry6_06 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:1,5
+ry6_07 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:4,5
+ry6_08 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f2 --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:3,40
+ry6_09 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter default --frames 40 GLARE:3 PP_QUALITY:3 RAYS:1 DOF:3,5
+ry6_10 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 40 GLARE:3 PP_QUALITY:3 RAYS:1 DOF:3,8
+ry6_11 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter default --frames 6 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:3,5 RESIZE:3:1600x900
+ry6_12 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 6 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:4,5 RESIZE:3:1600x900
+# Task Y7a: DOF 5's front layer at 1280x720 (masked composite TS1_2), 1024x576 (level 0 doubled), 1920x1080 and a resize to
+# 1600x900 (two front levels: MakeColor S13, TS2_2), the default filter; the doubled level at DOF 3 (1024x576, focus 2 / 40 m)
+ry7a_01 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:5,5
+ry7a_02 | --track spa --view chase --post --size 1024x576 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:5,5
+ry7a_03 | --track spa --view chase --post --size 1920x1080 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:5,5
+ry7a_04 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 6 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:5,5 RESIZE:3:1600x900
+ry7a_05 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter default --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:5,5
+ry7a_06 | --track spa --view chase --post --size 1024x576 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f2 --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:3,2
+ry7a_07 | --track spa --view chase --post --size 1024x576 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f2 --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:3,40
+# Task Y7a step 3: PP_QUALITY 5 with glare, a DOF level of a glare halving's size sharing its pool texture (the halving
+# reads it at the mode the DOF left); DOF 3 / 5 / 4 with GLARE 3 / 5 / 1, DOF 5 at PP_QUALITY 3
+ry7a_08 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter default --frames 10 GLARE:3 PP_QUALITY:5 RAYS:1 DOF:3,5
+ry7a_09 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 10 GLARE:3 PP_QUALITY:5 RAYS:1 DOF:5,5
+ry7a_10 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 10 GLARE:5 PP_QUALITY:5 RAYS:1 DOF:4,5
+ry7a_11 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 10 GLARE:3 PP_QUALITY:3 RAYS:1 DOF:5,5
+ry7a_12 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 10 GLARE:1 PP_QUALITY:5 RAYS:1 DOF:5,8
+ry7c_01 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f2 --frames 3 --size 2560x1440 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:5,2
+ry7c_02 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f2 --frames 3 --size 643x200 GLARE:0 PP_QUALITY:0 RAYS:1 DOF:5,2
+ry7c_03 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f2 --frames 3 --size 643x216 GLARE:0 PP_QUALITY:0 RAYS:1 DOF:5,2
+ry7c_04 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f2 --frames 3 --size 3840x2160 GLARE:0 PP_QUALITY:5 RAYS:1 DOF:5,2
+ry7c_05 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f2 --frames 3 --size 5760x1080 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:5,2
+ry7c_06 | --track spa --view sun --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 3 GLARE:3 PP_QUALITY:3 RAYS:1 DOF:5,5
+ry7c_07 | --track spa --view sun --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 3 GLARE:3 PP_QUALITY:5 RAYS:1 DOF:3,5
+ry7c_08 | --track spa --view chase --post --fxaa --size 1280x720 --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/spa_launch.audiotape --frames 52 --ppfilter rustyac_heat_x100 DOF:5,5
+# Task Y7c second session: DOF with glare and the light shafts off (the glare's pool halvings in the glare format)
+ry7c_09 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 10 GLARE:3 PP_QUALITY:3 DOF:3,5
+ry7c_10 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 10 GLARE:3 PP_QUALITY:5 DOF:5,5
+ry7c_11 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter default --frames 6 GLARE:5 PP_QUALITY:3 DOF:4,5
+# Task Y7c third session: the glare's rebuild after a resize, with and without DOF and the light shafts (rs7, rs13, rs14),
+# and step 3's row: DOF 3 + GLARE 3 + resize with frames from before the resize kept (each kept frame at its own size)
+ry7c_12 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 5 --dump 3 GLARE:3 PP_QUALITY:3 RAYS:1 DOF:3,5 RESIZE:3:1600x900
+ry7c_13 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 5 --dump 3 GLARE:3 PP_QUALITY:3 DOF:3,5 RESIZE:3:1600x900
+ry7c_14 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter rustyac_f4 --frames 5 --dump 3 GLARE:3 PP_QUALITY:3 RAYS:1 DOF:0 RESIZE:3:1600x900
+ry7c_15 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter default --frames 6 --dump 0,2,5 GLARE:3 PP_QUALITY:3 DOF:3,5 RESIZE:3:1600x900
+# -- Task Y7d: the sweep's findings (tools/proofs/yebis_sweep.sh)
+# DOF EDGE_QUALITY 1 (b&w, movie, natural) at DOF 5: no front layer
+ry7d_01 | --track spa --view sun --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --frames 3 --size 1280x720 --ppfilter b&w PP_QUALITY:5 GLARE:5 DOF:5,5 RAYS:1
+# light shafts with the glare off: Initialize's glare luminance 1.0 stays
+ry7d_02 | --track spa --view sun --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --frames 3 --size 1280x720 --ppfilter default PP_QUALITY:0 GLARE:0 DOF:0 RAYS:1
+# depth of field with no level in range (PP quality 1): halved and composited alone
+ry7d_03 | --track spa --view sun --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --frames 3 --size 1280x720 --ppfilter default PP_QUALITY:1 GLARE:0 DOF:1,5
+# glare levels under 4 texels (PP quality 1 at glare 5) made 3
+ry7d_04 | --track spa --view sun --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --frames 3 --size 1280x720 --ppfilter default PP_QUALITY:1 GLARE:5 DOF:5,5 RAYS:1
+# triple screens: CameraTripleScreen's handler sets the light shafts' length to 1
+ry7d_05 | --track spa --view sun --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --frames 3 --size 1280x720 --ppfilter default --triple PP_QUALITY:0 GLARE:1 RAYS:1
+# -- Task Y7e: DOF APERTURE_SHAPE 2 (natural: the turned square) and 4 (photographic: the rhombic hexagon) at DOF 1-5,
+# doubled levels at 1024x576, a resize; natural's EDGE_QUALITY 1 has no front blur
+ry7e_01 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter natural --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:1,5
+ry7e_02 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter natural --frames 3 --size 1024x576 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:3,5
+ry7e_03 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter natural --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:4,5
+ry7e_04 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter natural --frames 3 --size 1024x576 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:5,5
+ry7e_05 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter photographic --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:2,5
+ry7e_06 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter photographic --frames 3 --size 1024x576 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:3,5
+ry7e_07 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter photographic --frames 3 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:4,5
+ry7e_08 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter photographic --frames 3 --size 1024x576 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:5,5
+ry7e_09 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --ppfilter photographic --frames 6 GLARE:0 PP_QUALITY:3 RAYS:1 DOF:4,5 RESIZE:3:1600x900
+# video.ini [SATURATION] LEVEL (Sim::Sim: LEVEL * 0.01 into the lighting's saturation, the scene's cbuffer and YEBIS's colour matrix), with and without post-processing
+ry7e_10 | --track spa --view chase --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --frames 3 --post --size 1280x720 --ppfilter default GLARE:3 PP_QUALITY:3 SATURATION:70
+ry7e_11 | --track spa --view chase --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --frames 3 SATURATION:140
+# Task L1: [CHROMATIC_ABERRATION] ENABLED=0 on a flat camera: no init flag 0x40000, no draws 2 and 6 (as VR)
+rl1_01 | --track spa --view chase --post --car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 3590 --ppfilter rustyac_caoff --frames 175 GLARE:3 PP_QUALITY:3 RAYS:1

@@ -1,0 +1,18 @@
+[package]
+name = "rustyac-launcher-gpui"
+description = "rustyAC's launcher for macOS and Linux, drawn with GPUI: the cars and tracks with their previews, the skins, the assists (newbie to pro), the keys, the sound, the window and a server to join; Drive starts rustyac-play."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "rustyac-launch"
+path = "src/main.rs"
+
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+# Zed's GPU UI; the shaders are compiled when the program starts (no Xcode needed to build it)
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+# mods come as .zip archives
+zip = { version = "2", default-features = false, features = ["deflate"] }

@@ -1,0 +1,334 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The physics proofs whose recordings lived only in re/scratch, recorded from the game's own code
+# (acs.exe mapped into the oracle's process, never run) once into re/gold/fresh/rec (xz, see
+# lib.sh) and compared from there; PROOF_RERECORD=1 records them all again and holds each against
+# the kept one. The unpacked copies in target/proofs/fresh/rec are deleted once compared.
+# Quick keys (tools/proofs/quick/fresh.txt): "car", "conditions <scenario>", "awd <car>",
+# "hybrid <car>", "sus <car>", "collide spa", "collide-worlds", "rays <track> <layout>",
+# "survey <car> <track> <layout>", "crash <car>", "micro <kind>/<seed>", "cameras <seed>", "modes <seed>", "drive ta|drift|drag", "ini <file>", "multi ...", "shm ...".
+#   FRESH_PARTS="car conditions awd hybrid sus collide rays survey crash micro cameras modes ini multi shm" (default: all of them)
+area=fresh
+. "$(dirname "$0")/lib.sh"
+tool car_oracle
+tool chassis_compare
+parts=${FRESH_PARTS:-"car conditions awd hybrid sus collide rays survey crash micro cameras modes ini multi shm"}
+root=$out/root     # the scratch game folder the oracles build for themselves
+rec=$out/rec
+
+part() { case " $parts " in *" $1 "*) echo "== $1" >&2; return 0 ;; esac; return 1; }
+
+# record <label> <car_oracle arguments>: one more recording into $rec/<label>, kept or recorded
+record() {
+    label=$1; shift
+    c=$cache/$label/$(cache_key "$@")
+    cache_get "$c" "$rec/$label" && return
+    rm -rf "$rec/.new"
+    if "$CO" "$@" --out "$rec/.new" --root "$root" >> "$out/record.txt" 2>&1; then
+        cache_put "$c" "$rec/.new" "$label: car_oracle $*"
+    else
+        echo "record failed: $label $*" >> "$out/record.txt"
+    fi
+    mkdir -p "$rec/$label"; mv "$rec/.new"/* "$rec/$label/" 2>/dev/null; rm -rf "$rec/.new"
+}
+
+# compare_dirs: chassis_compare over every folder in $rec, one case per recording, then away with them
+compare_dirs() {
+    for dir in "$rec"/*/; do
+        [ -d "$dir" ] || continue
+        name=$(basename "$dir")
+        "$CC" run --dir "$dir" > "$out/cmp_$name.txt" 2>&1
+        awk -v d="$name" '
+            /^[a-z_0-9]+: [0-9]+ steps/ { s = $1; sub(":", "", s) }
+            /bit-exact: 100 %/ && s != "" { print "IDENTICAL " d "/" s; s = "" }
+            (/bit-exact: [0-9.]+ %/ && !/100 %/ || /first difference/) && s != "" { print "DIFFERENT " d "/" s; s = "" }
+        ' "$out/cmp_$name.txt" | while read -r v c; do verdict "$c" "$v"; done
+    done
+    rm -rf "$rec"
+}
+
+if part car; then  # Task 9-13: every flat-road scenario of the F2004
+    keep car && record f2004 all
+    compare_dirs
+fi
+
+if part conditions; then  # Task 15: weather, grip, wind and setups on Spa
+    for s in spa_cold_green_wind spa_hot_optimum spa_user spa_wind_any spa_green_laps; do
+        keep "conditions $s" && record conditions run --track spa --scenario "$s"
+    done
+    # a player's own setup (the kept copy in re/gold/docs); god_tc4.ini is it with TRACTION_CONTROL 4
+    god=$(cygpath -w "$docs_gold/setups/ks_ferrari_f2004/spa/god.ini")
+    [ -f "$god" ] && keep "conditions spa_setup" && record conditions run --track spa --scenario spa_setup --setup "$god"
+    [ -f "$gold/fresh/god_tc4.ini" ] && keep "conditions spa_setup_launch" && record conditions run --track spa --scenario spa_setup_launch --setup "$gold/fresh/god_tc4.ini"
+    compare_dirs
+fi
+
+if part awd; then  # Task 16: four-wheel drive
+    for car in ks_lamborghini_aventador_sv ks_lamborghini_huracan_performante ks_maserati_levante ks_nissan_gtr ks_porsche_cayenne ks_porsche_macan; do
+        keep "awd $car" || continue
+        record "awd2_$car" all --car "$car" --only pt_autoshift,wc_stops,wc_spirited
+    done
+    for car in ks_lamborghini_sesto_elemento ks_audi_r8_plus; do
+        keep "awd $car" || continue
+        for s in spa_launch spa_kerbs spa_lap; do record "awd_spa_$car" run --track spa --scenario "$s" --car "$car"; done
+    done
+    compare_dirs
+fi
+
+if part hybrid; then  # Task 16: KERS and ERS, the installed cars and the made-up test cars
+    for car in ks_ferrari_f138 ferrari_laferrari ks_ferrari_sf15t ks_ferrari_sf70h ks_mclaren_p1 vrc_formula_alpha_2026; do
+        keep "hybrid $car" || continue
+        record "hy_$car" all --car "$car" --only hy_deploy,hy_modes,wc_stops
+    done
+    for car in ks_ferrari_f138 ks_ferrari_sf15t; do
+        keep "hybrid $car" || continue
+        for s in spa_hybrid_timing spa_hybrid_lap spa_launch spa_drs_timing; do record "hy_spa_$car" run --track spa --scenario "$s" --car "$car"; done
+    done
+    compare_dirs
+    for car in f138_kers_wheels laferrari_kers_button sesto_awd_kers r8_awd2_kers f2004_fwd_kers sf15t_ers_limits vrc_formula_lithium_2023 lithium_ers_front vrc_formula_alpha_2025; do
+        keep "hybrid $car" || continue
+        record "hyt_$car" all --car "$car" --only hy_deploy,hy_modes
+    done
+    compare_dirs
+fi
+
+if part sus; then  # Task 17: suspensions, the eight cars of docs/port/suspensions.md
+    for car in bmw_m3_e30 ks_toyota_gt86 ks_audi_sport_quattro ks_ferrari_250_gto ks_ferrari_812_superfast ks_porsche_panamera gt3_multilink formula_k; do
+        keep "sus $car" || continue
+        for s in pt_autoshift wc_stops wc_spirited; do record "t17_$car" run --car "$car" --scenario "$s"; done
+        for s in spa_launch spa_kerbs spa_eau_rouge; do record "t17_spa_$car" run --track spa --scenario "$s" --car "$car"; done
+        for s in spa_wall_gravel spa_kerb_strike; do record "t17_col_$car" run --track spa --collide --scenario "$s" --car "$car"; done
+        compare_dirs
+    done
+fi
+
+if part collide; then  # Task 13: contacts
+    if keep "collide spa"; then
+        "$CO" collide --track spa --root "$root" > "$out/collide.txt" 2>&1
+        grep -q '^No difference' "$out/collide.txt" && verdict "collide spa" IDENTICAL || verdict "collide spa" DIFFERENT
+    fi
+    keep collide-worlds && "$CO" collide-worlds --steps 3000 --root "$root" > "$out/collide_worlds.txt" 2>&1
+    # one table row per world; the last column is the first difference ("none")
+    grep -E '^\| `[a-z_]+` \|' "$out/collide_worlds.txt" | while IFS='|' read -r _ w _ _ _ _ _ first _; do
+        w=$(echo "$w" | tr -d ' `')
+        case "$first" in *none*) verdict "collide-worlds $w" IDENTICAL ;; *) verdict "collide-worlds $w" DIFFERENT "$first" ;; esac
+    done
+fi
+
+if part rays; then  # Task 14 and 18: the road under the wheels on every track and layout that loads
+    build track_survey cargo build --release --locked --quiet -p rustyac-physics --bin track_survey
+    target/release/track_survey.exe --list 2>/dev/null | tr -d '\r' | awk 'NF' > "$out/layouts.txt" || true
+    [ -s "$out/layouts.txt" ] || printf 'magione\nspa\nks_laguna_seca\n' > "$out/layouts.txt"
+    while read -r t l _; do
+        keep "rays $t $l" || continue
+        "$CO" rays --track "$t" ${l:+--layout "$l"} --count 200000 --root "$root" > "$out/rays.txt" 2>&1
+        if grep -q '^No difference' "$out/rays.txt"; then verdict "rays $t $l" IDENTICAL
+        elif grep -qiE 'refused|not load|cannot|needs .*models_|is missing|invalid stof' "$out/rays.txt"; then skip "rays $t $l" "the game refuses the layout: $(grep -m1 -iE 'refused|not load|cannot|needs .*models_|is missing|invalid stof' "$out/rays.txt" | cut -c1-120)"
+        else verdict "rays $t $l" DIFFERENT "$(tail -n 1 "$out/rays.txt")"; fi
+    done < "$out/layouts.txt"
+fi
+
+if part survey; then  # Task 18: a car on every track of survey_list.txt, then rustyac.exe replays the game's drive
+    build rustyac cargo build --release --locked --quiet -p rustyac-game --bin rustyac
+    # SURVEY_FROM=<n>: start at the n-th run of the list (to finish a run that was cut off)
+    grep -vE '^\s*(#|$)' tools/proofs/survey_list.txt | tail -n +"${SURVEY_FROM:-1}" | while read -r car t l scenarios; do
+        [ "$l" = - ] && l=
+        keep "survey $car $t $l" || continue
+        label="t18_${t}_${l}_${car}"
+        for s in $scenarios; do record "$label" run --track "$t" ${l:+--layout "$l"} --scenario "$s" --car "$car" --collide; done
+        # the exe replays the game's inputs: the same states as the game's recording
+        "$CC" game-replay --dir "$rec/$label" --exe target/release/rustyac.exe --own "$(own)" > "$out/replay_$label.txt" 2>&1
+        grep -E '^\| .(trk|spa)_[a-z_]*. \|' "$out/replay_$label.txt" | while IFS='|' read -r _ sc rest; do
+            sc=$(echo "$sc" | tr -d ' `')
+            case "$rest" in *"100 %"*) verdict "game-replay $label/$sc" IDENTICAL ;; *skipped*) skip "game-replay $label/$sc" "$rest" ;; *) verdict "game-replay $label/$sc" DIFFERENT "$rest" ;; esac
+        done
+        compare_dirs
+    done
+fi
+
+if part crash; then  # Task 22b: into the barrier at Spa with damage, five suspensions; then rustyac.exe replays it
+    build rustyac cargo build --release --locked --quiet -p rustyac-game --bin rustyac
+    for car in ks_ferrari_f2004 bmw_m3_e30 ks_ferrari_812_superfast gt3_multilink ks_ferrari_250_gto; do
+        keep "crash $car" || continue
+        label="t22b_$car"
+        record "$label" run --track spa --collide --scenario spa_crash --car "$car"
+        "$CC" game-replay spa_crash --dir "$rec/$label" --exe target/release/rustyac.exe --own "$(own)" > "$out/replay_$label.txt" 2>&1
+        grep -qE '^\| .spa_crash. \|.*100 %' "$out/replay_$label.txt" && verdict "game-replay $label/spa_crash" IDENTICAL \
+            || verdict "game-replay $label/spa_crash" DIFFERENT "$(grep -m1 -E 'spa_crash|rror' "$out/replay_$label.txt")"
+        # Task S2b: bodyDamageLevel0's job after the crash, below the crash's level (the game sets it);
+        # after the replay check, as record() sets $label
+        [ "$car" = bmw_m3_e30 ] && record "s2b_${car}_set_damage" run --track spa --collide --scenario spa_crash --car "$car" --set-damage 0@30=1
+        compare_dirs
+    done
+fi
+
+if part micro; then  # Task 28: the game's referee on made-up drives, 25 seeds of each of 8 session lists
+    for kind in 0 1 2 3 4 5 6 7; do
+        for seed in $(seq 1 25); do
+            keep "micro $kind/$seed" || continue
+            cars=$(( 2 + (seed * 7 + kind) % 23 ))
+            r=$("$CO" race-micro --seed "$seed" --kind "$kind" --count "$cars" --root "$root" 2>&1 | grep '^referee:')
+            case "$r" in *IDENTICAL*) verdict "race-micro $kind/$seed/$cars" IDENTICAL ;; *) verdict "race-micro $kind/$seed/$cars" DIFFERENT "$r" ;; esac
+        done
+    done
+fi
+
+if part cameras; then  # Tasks 34, 46 and 46b: the game's start, free (F7), cockpit, drivable, car, track (F3), random (F2), onboard free (F5), cinematic and helicopter cameras on made-up cars, keys and look keys; Task 47: the cockpit camera on a stand-in head tracker and TrackIR's start and stop
+    for seed in 1 2 3; do
+        keep "cameras $seed" || continue
+        d=$root/cameras/$seed
+        mkdir -p "$d"
+        "$CO" start-camera-micro --seed "$seed" --steps 60000 --root "$d" > "$out/cameras_$seed.txt" 2>&1
+        cargo run --release --locked --quiet -p rustyac-game --example start_camera_check -- "$d/start_camera.tape" "$d/free_camera.tape" "$d/driving_camera.tape" "$d/track_camera.tape" "$ac" "$d/random_camera.tape" "$seed" "$d/orbit_camera.tape" "$d/trackir_init.tape" >> "$out/cameras_$seed.txt" 2>&1
+        for what in "start camera" "free camera" "driving cameras" "track cameras" "random camera" "orbit cameras" "trackir start"; do
+            r=$(grep "^$what: " "$out/cameras_$seed.txt")
+            case "$r" in *IDENTICAL*) verdict "cameras $seed $what" IDENTICAL ;; *) verdict "cameras $seed $what" DIFFERENT "${r:-no result}" ;; esac
+        done
+    done
+    # every car's collider box (the look-back points), the game's ModelBoundaries against the port's
+    if keep "cameras boundaries"; then
+        tool render_oracle
+        r=$("$RO" boundaries --root "$(cygpath -am "$root/boundaries")" --out "$(cygpath -am "$root/boundaries")" 2>&1 < /dev/null | grep '^model boundaries:')
+        case "$r" in *IDENTICAL*) verdict "cameras boundaries" IDENTICAL "$r" ;; *) verdict "cameras boundaries" DIFFERENT "${r:-no result}" ;; esac
+    fi
+    # Task 47: the game's SteamInit and SteamShutdown on a stand-in Steam, every call in order
+    for seed in 1 2 3; do
+        keep "steam $seed" || continue
+        d=$root/steam/$seed
+        mkdir -p "$d"
+        "$CO" steam-micro --seed "$seed" --root "$d" > "$out/steam_$seed.txt" 2>&1
+        cargo run --release --locked --quiet -p rustyac-game --example steam_check -- "$d/steam.tape" "$seed" >> "$out/steam_$seed.txt" 2>&1
+        r=$(grep '^steam start: ' "$out/steam_$seed.txt" | tail -1)
+        case "$r" in *IDENTICAL*) verdict "steam $seed" IDENTICAL "$r" ;; *) verdict "steam $seed" DIFFERENT "${r:-no result}" ;; esac
+    done
+    # Task 47d: F11's virtual mirror with the server's FORCE_VIRTUAL_MIRROR and a headset, every message
+    for seed in 1 2 3; do
+        keep "mirror $seed" || continue
+        d=$root/mirror/$seed
+        mkdir -p "$d"
+        "$CO" mirror-micro --seed "$seed" --root "$d" > "$out/mirror_$seed.txt" 2>&1
+        cargo run --release --locked --quiet -p rustyac-game --example mirror_check -- "$d/mirror.tape" "$seed" >> "$out/mirror_$seed.txt" 2>&1
+        r=$(grep '^virtual mirror: ' "$out/mirror_$seed.txt" | tail -1)
+        case "$r" in *IDENTICAL*) verdict "mirror $seed" IDENTICAL "$r" ;; *) verdict "mirror $seed" DIFFERENT "${r:-no result}" ;; esac
+    done
+    # Task 47d: SteamInterface's achievements, stats and Friends Leaderboard on scripted drives, every Steam call in order
+    for seed in 1 2 3; do
+        keep "achievements $seed" || continue
+        d=$root/achievements/$seed
+        mkdir -p "$d"
+        "$CO" achievements-micro --seed "$seed" --root "$(cygpath -am "$d")" > "$out/achievements_$seed.txt" 2>&1
+        cargo run --release --locked --quiet -p rustyac-game --example achievements_check -- "$d/achievements.tape" "$d/port" "$ac" >> "$out/achievements_$seed.txt" 2>&1
+        r=$(grep -E '^(IDENTICAL|DIFFERENT)' "$out/achievements_$seed.txt" | tail -1)
+        case "$r" in IDENTICAL*) verdict "achievements $seed" IDENTICAL "$r" ;; *) verdict "achievements $seed" DIFFERENT "${r:-no result}" ;; esac
+    done
+fi
+
+if part modes; then  # Task 45: special-event files and goals, hotlap, Time Attack, drift, drag and race events judged by the game's code, and their race_out.json extras
+    for seed in 7 12; do
+        keep "modes $seed" || continue
+        r=$("$CO" mode-micro --seed "$seed" --root "$root/modes" 2>&1 | grep '^modes:')
+        case "$r" in *IDENTICAL*) verdict "mode-micro $seed" IDENTICAL ;; *) verdict "mode-micro $seed" DIFFERENT "$r" ;; esac
+        for kind in 5 6 7; do  # race_out.json's extras of time attack, drift and drag
+            r=$("$CO" mode-micro --kind "$kind" --seed "$seed" --root "$root/modes" 2>&1 | grep '^mode-micro extras')
+            case "$r" in *IDENTICAL*) verdict "mode extras $kind $seed" IDENTICAL ;; *) verdict "mode extras $kind $seed" DIFFERENT "$r" ;; esac
+        done
+    done
+    # Task 45b: rustyac.exe drives Time Attack at Spa (the autodriver) and Drift on the drift
+    # track (--drift-drive, a drift car, no aids, goals in race.ini) with drawn frames out of
+    # step with physics (--drawn-frames: 5-40 ms); each drawn frame through the game's
+    # TimeAttack::update and DriftMode::renderHUD (render_oracle drift_drive: pixels, draw calls,
+    # state with the goal messages), each drift step through DriftModeComponent::step.
+    # Task 45c: Drag at the drag strip (--drag-drive: AI drag drivers in both cars, goals of
+    # 1, 2, 3 wins) through DragMode's update, new session, finish line and resetMatch
+    for mode in ta drift drag; do
+        keep "drive $mode" || continue
+        build rustyac cargo build --release --locked --quiet -p rustyac-game --bin rustyac
+        d=$root/drive_$mode; rm -rf "$d"; mkdir -p "$d"
+        layout=
+        if [ $mode = ta ]; then
+            car=ks_ferrari_f2004; track=spa; drive="--autodrive --duration 200"
+            session='NAME=Time Attack
+TYPE=5'
+        elif [ $mode = drag ]; then
+            car=bmw_m3_e30; track=ks_drag; layout=drag400; drive="--drag-drive --duration 120"
+            session='NAME=Drag Race
+TYPE=7
+MATCHES=3'
+        else
+            car=bmw_m3_e92_drift; track=drift; drive="--drift-drive --duration 25"
+            session='NAME=Drift
+TYPE=6'
+            printf '%s\n' '[ASSISTS]' IDEAL_LINE=0 AUTO_BLIP=1 STABILITY_CONTROL=0 AUTO_BRAKE=0 AUTO_SHIFTER=1 ABS=0 TRACTION_CONTROL=0 AUTO_CLUTCH=1 VISUALDAMAGE=0 DAMAGE=0 FUEL_RATE=1 TYRE_WEAR=1 TYRE_BLANKETS=0 SLIPSTREAM=1 > "$d/assists.ini"
+        fi
+        cat > "$d/race.ini" <<EOF
+[RACE]
+TRACK=$track
+CONFIG_TRACK=$layout
+MODEL=$car
+CARS=1
+[CAR_0]
+MODEL=$car
+SKIN=
+[SESSION_0]
+$session
+SPAWN_SET=START
+EOF
+        [ $mode = drag ] && sed -i 's/^CARS=1/CARS=2/' "$d/race.ini" && printf '%s\n' '[CAR_1]' MODEL=$car SKIN= '[SPECIAL_EVENT]' GUID=4545 '[CONDITION_0]' OBJECTIVE=1 '[CONDITION_1]' OBJECTIVE=2 '[CONDITION_2]' OBJECTIVE=3 >> "$d/race.ini"
+        [ $mode = drift ] && printf '%s\n' '[SPECIAL_EVENT]' GUID=4545 '[CONDITION_0]' OBJECTIVE=3 '[CONDITION_1]' OBJECTIVE=50 '[CONDITION_2]' OBJECTIVE=70 '[CONDITION_3]' OBJECTIVE=1000 >> "$d/race.ini"
+        rustyac target/release/rustyac.exe --headless --no-shm --no-audio --race-ini "$d/race.ini" $drive --race-seed 28000 --drawn-frames 45 --out-dir "$d/out" --track $track ${layout:+--layout $layout} --car $car > "$out/drive_$mode.txt" 2>&1
+        frames=$(grep -cE "^(ta|dr|dg) " "$d/out/mode_frames.txt" 2>/dev/null)
+        r=$("$CO" mode-micro --root "$root/modes" --mode-frames "$(cygpath -am "$d/out/mode_frames.txt")" 2>&1 | tail -n 1)
+        if [ $mode = ta ]; then
+            case "$r" in *IDENTICAL*) verdict "drive ta" IDENTICAL "$r" ;; *) verdict "drive ta" DIFFERENT "$r" ;; esac
+            continue
+        fi
+        if [ $mode = drag ]; then
+            # (a drive that runs no match proves little)
+            case "$r" in *IDENTICAL*) case "$r" in *" (0 matches"*) verdict "drive drag" DIFFERENT "no match: $r" ;; *) verdict "drive drag" IDENTICAL "${r#*: }" ;; esac ;; *) verdict "drive drag" DIFFERENT "$r" ;; esac
+            continue
+        fi
+        tool render_oracle
+        RENDER_ORACLE_MODE_FRAMES=$(cygpath -am "$d/out/mode_frames.txt") "$RO" gui --gui drift_drive --root "$root/gui" --out "$d/frames" > "$out/drive_drift_gui.txt" 2>&1 < /dev/null
+        f=$out/drive_drift_gui.txt
+        said=$(grep -o '"[A-Z ]* Achieved"' "$d/frames/drift_drive.port.kgllog" 2>/dev/null | uniq | tr -d '"' | paste -sd, -)
+        # the drive must score and reach goals (a drive that never drifts proves little)
+        ok=1
+        case "$r" in *IDENTICAL*) ;; *) ok= ;; esac
+        case "$r" in *" 0 points"*) ok= ;; esac
+        [ -n "$said" ] && grep -q '^command log: IDENTICAL' "$f" && grep -q '^pixels: IDENTICAL' "$f" && grep -q '^state and events: IDENTICAL' "$f" && ! grep -q DIFFERENT "$f" || ok=
+        if [ -n "$ok" ]; then
+            verdict "drive drift" IDENTICAL "$frames drawn frames; ${r#*: }; messages $said"
+        else
+            verdict "drive drift" DIFFERENT "$r $said $(grep -m1 -E 'DIFFERENT|rror|panic' "$f")"
+        fi
+        rm -rf "$d/frames"
+    done
+fi
+
+if part ini; then  # Task 24b and 28: race.ini read by the game and by the port (the saved runs' own files)
+    find oracle/t24b oracle/t28 oracle/t28b -name '*.ini' ! -name 'laps.ini' 2>/dev/null | sort > "$out/inis.txt"
+    while read -r f; do
+        keep "ini $f" || continue
+        "$CO" race-ini "$f" --root "$root" > "$out/ini.txt" 2>&1
+        if grep -q 'IDENTICAL' "$out/ini.txt" && ! grep -q 'DIFFERENT' "$out/ini.txt"; then verdict "race-ini $f" IDENTICAL
+        elif grep -qE 'not a race.ini|no \[RACE\]' "$out/ini.txt"; then :
+        else verdict "race-ini $f" DIFFERENT "$(grep -m1 -E 'DIFFERENT|rror' "$out/ini.txt")"; fi
+    done < "$out/inis.txt"
+fi
+
+if part multi; then  # Task 28 and 28b: several cars, recorded once, the port at 0, 1 and 8 threads
+    multi_list tools/proofs/multi_fresh.txt "$root" "$rec" "$cache"
+fi
+
+if part shm; then  # Task 43c: the game's shared memory pages (static once, graphics every frame), never kept
+    CAR_ORACLE_SHM=1 m_label=shm multi_list tools/proofs/shm_list.txt "$root" "$rec" ""
+    # the PerformanceMeter's other readers: the "recover time" penalty (a mode the game never
+    # picks itself) with the meter on
+    CAR_ORACLE_SHM=1 CAR_ORACLE_PERF_METER=1 CAR_ORACLE_PENALTY_MODE=2 m_label=recover multi_list tools/proofs/recover_list.txt "$root" "$rec" ""
+    # the Telemetry app's channels that read the player's car through a function of their own
+    CAR_ORACLE_TELEMETRY=1 m_label=telem multi_list tools/proofs/telem_list.txt "$root" "$rec" ""
+fi
+
+rm -rf "$root"
+summary

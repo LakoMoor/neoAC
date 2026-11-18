@@ -1,0 +1,141 @@
+# Releases and CI
+
+## Versions
+
+- The version is `[workspace.package] version` in the root `Cargo.toml`; every crate in `crates/` takes it
+  from there.
+- `0.N.0` is the state after task N (`0.14.0` = after Task 14). The last number is for fixes in between:
+  `0.14.1`, `0.14.2`.
+- A **side quest** between two tasks takes the last number too: the browser preview (Task 20w), done between
+  Tasks 20 and 21, is `0.20.1`. The next task is still `0.21.0`.
+- A release is a git tag `vX.Y.Z`. **The tag must equal `v` + the version in `Cargo.toml`**, otherwise the
+  release stops at its first step.
+- Every release is a normal release (not a "pre-release"). It is marked as the repo's **latest** release
+  (also while the first number is 0) only when its tag is the highest version among the repo's releases:
+  an older tag released by hand, or one that finishes after a newer one, does not take the badge.
+
+## How to release
+
+1. Set the version in the root `Cargo.toml`, and the same number in
+   `crates/rustyac-gateway/Cargo.toml` (the gateway's manifest does not inherit it: its
+   Docker image is built from that folder alone, where there is no workspace).
+2. Build once, so the lock files follow (the tools have their own, and CI builds with `--locked`):
+
+   ```
+   cargo build --release
+   for m in tools/*/Cargo.toml; do cargo build --release --manifest-path $m; done
+   ```
+
+   If a lock file changed, make `THIRD_PARTY_NOTICES.txt` again (`python tools/notices.py`, with
+   cargo-about 0.9.3 installed: see LICENSING.md); `packaging/package.ps1` and `web/build.py` ship it.
+
+3. Rerun the proofs (needs the ignored `oracle/` and `re/gold/` folders and the AC install,
+   nothing in `re/scratch/`); every area must have 0 different (table in target/proofs/table.md):
+
+   ```
+   bash tools/proofs/run_all.sh --quick                 # every release: a sample of every area (≈ 30 min)
+   bash tools/proofs/run_all.sh --changed <last tag>    # every release: all of what the changed files touch
+   bash tools/proofs/run_all.sh --full                  # milestones only: everything, against the game's kept results (≈ 4.5 h)
+   ```
+
+   Anything a new proof needs goes into `tools/proofs/` (scripts, lists; committed) or
+   `re/gold/<area>/` (recordings and other game-derived files; ignored, never committed, with a
+   README on how it was made). `docs/port/proofs.md` says what each area compares.
+
+4. Commit and tag:
+
+   ```
+   git commit -am "chore(release): v0.15.0"
+   git tag -a v0.15.0 -m "rustyAC v0.15.0: <what is new>"
+   ```
+
+5. Push the commit and the tag together:
+
+   ```
+   git push --follow-tags
+   ```
+
+   `--follow-tags` only pushes annotated tags (`git tag -a`), which is what step 4 makes.
+
+About ten minutes later the release is on the [Releases page](https://github.com/thesupersupersigma/rustyAC/releases).
+
+## What the workflows do
+
+Both run on GitHub's own Windows machines (`windows-latest`), never on a private PC, with Rust pinned to the
+version, components and wasm targets in `rust-toolchain.toml` (rustup installs them from it; raise the
+version only in its own task, with a full proof run). Neither has any Assetto
+Corsa file: the tests that need the game's folder or `cardata/` print NOT TESTED and pass, and the bit-exact
+tests that work from the recordings in the repo run in full. The Visual C++ 2013 runtime is installed first,
+so the tests compute with `MSVCR120.dll`, the game's own maths.
+
+**`.github/workflows/ci.yml`**: on every push to `master` and on every pull request. It can only read the repo.
+
+1. `cargo build --release --workspace`
+2. `cargo test --release --workspace`
+3. `cargo clippy --workspace --all-targets -- -D warnings`: a warning fails the run. Where clippy's rewrite would change
+   what bit-exact code computes (a comparison a NaN must fall through the game's way, an operand order),
+   the code carries an `#[allow]` with its reason instead
+4. builds every tool in `tools/*/` (they are not run: they need `acs.exe`)
+5. builds the browser preview's site with `python web/build.py` (code only: no car, no track, no preview
+   pack), runs clippy for the two wasm targets, and builds the WASI replay runner (`docs/port/web.md`)
+
+Cargo's downloads and the build output are cached between runs.
+
+**`.github/workflows/release.yml`**: on a pushed tag `vX.Y.Z`, or started by hand for a tag that exists
+(see below). Either way it checks out the tag itself.
+
+1. stops if the tag does not exist, is not of the form `vX.Y.Z`, or is not `v` + the version in `Cargo.toml`
+2. stops if a release for that tag already exists (a release is never deleted or overwritten)
+3. builds and tests from scratch (no cache)
+4. `packaging/package.ps1` makes `rustyAC-vX.Y.Z-windows-x64.zip` with `rustyac.exe`, `rustyac-launcher.exe` (Assetto Corsa's
+   launcher, `docs/port/launcher.md`), `README.md`,
+   `LICENSING.md`, the four license files (ODE's under `crates/rustyac-ode/`, where `LICENSING.md` says it
+   is) and `HOW_TO_RUN.txt` (from `packaging/HOW_TO_RUN.txt`), reads the zip back to check that nothing else
+   is in it, and writes `rustyAC-vX.Y.Z-windows-x64.zip.sha256`
+5. `python web/build.py --zip dist/rustyAC-vX.Y.Z-web.zip` makes the browser preview's site as a second
+   zip, with its `.sha256`. It is **the site only**: `index.html`, `app.js`, `style.css`, the wasm and its
+   glue script under `pkg/`, `LICENSE-GPL` and `LICENSING.md`. The script reads the zip back and stops if
+   anything else is in it. No preview pack and no Assetto Corsa file can get in: neither exists on GitHub's
+   machine (`dist-web/` is ignored by git). How to host it: [docs/web.md](web.md)
+6. `gh release create`: title `rustyAC vX.Y.Z`, notes generated by GitHub from the commits since
+   the last release, the two zips and their `.sha256` files attached; a normal release, marked as the latest
+   (`--latest`) only when the tag is the highest version released (versions compared with `sort -V`),
+   otherwise `--latest=false`
+7. by hand, when the release has a notes file: `gh release edit vX.Y.Z --notes-file docs/releases/vX.Y.Z.md`
+   replaces the generated notes with it
+
+### Starting a release by hand
+
+When a pushed tag did not start the workflow (v0.14.0 did not: only CI ran), start it for the tag that is
+already on GitHub:
+
+- on the website: **Actions → Release → Run workflow**, type the tag (`v0.15.0`) into **tag**, **Run workflow**
+- or with GitHub's command line: `gh workflow run release.yml -f tag=v0.15.0`
+
+The run does the same six steps with the same checks. The "Use workflow from" branch only chooses which
+copy of `release.yml` runs; what is built is always the tag.
+
+To try the packaging on your own PC: `cargo build --release --workspace`, then
+`packaging\package.ps1 -Version 0.14.0 -OutDir re\scratch\dist`.
+
+## When a release fails
+
+Open the run under **Actions → Release** and read the red step.
+
+- **Nothing started after the push**: start it by hand (above).
+- **It failed for a reason outside the code** (GitHub hiccup, a download that timed out): press
+  **Re-run jobs → Re-run failed jobs**. Nothing was published, so nothing is in the way.
+- **The tag does not match `Cargo.toml`**, and nothing was published: delete the tag and make it again on the
+  right commit.
+
+  ```
+  git tag -d v0.15.0
+  git push origin :refs/tags/v0.15.0
+  ```
+
+  then steps 1 to 4 above.
+- **The build or a test fails**: the tag points at a broken commit. Fix it on `master` and release the next
+  patch version (`v0.15.1`) instead of moving the tag; a tag that was public should stay where it is.
+- **"the release vX.Y.Z already exists"**: the run was started a second time after it had published. The
+  workflow never replaces a release. If it really has to be made again, delete the release by hand on the
+  Releases page, then re-run the job.

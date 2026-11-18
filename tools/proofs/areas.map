@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# run_all.sh --changed <tag>: which proof areas a changed file asks for. One rule a line:
+# a glob (`*` matches across folders too) and the areas, or `none`. The first rule that matches
+# a file wins; a file no rule matches runs every area.
+
+# what changes nothing the proofs look at
+docs/flags.md                 browser
+docs/*                        none
+prompts/*                     none
+.github/*                     none
+packaging/*                   none
+things/*                      none
+LICENSE*                      none
+.gitignore                    none
+*.md                          none
+
+# the proofs themselves
+tools/proofs/quick/*          none
+tools/proofs/physics.sh       physics
+tools/proofs/fresh.sh         fresh
+tools/proofs/multi_fresh.txt  fresh
+tools/proofs/shm_list.txt     fresh
+tools/proofs/recover_list.txt fresh
+tools/proofs/telem_list.txt   fresh
+tools/proofs/survey_list.txt  fresh
+tools/proofs/sound.sh         sound
+tools/proofs/render.sh        render
+tools/proofs/render_list.txt  render
+tools/proofs/render_wgpu*     none
+tools/proofs/gui.sh           gui
+tools/proofs/gui_list.txt     gui
+tools/proofs/replays.sh       replays
+tools/proofs/replay_list.txt  replays
+tools/proofs/net.sh           net
+tools/proofs/browser.sh       browser
+tools/proofs/ondemand*        browser
+tools/proofs/ai_page.sh       ai_page
+tools/proofs/ai_v6.py         ai_page
+tools/proofs/shaders.sh       shaders
+tools/proofs/launcher*        launcher
+tools/proofs/log2req.py       launcher
+tools/proofs/tdiff.py         launcher
+tools/proofs/dumps.sh         dumps
+tools/proofs/python.sh        python
+tools/proofs/areas*           none
+tools/proofs/lock_crates.py   none
+tools/proofs/same_rec.py      fresh
+re/gold/fresh/*               fresh
+re/gold/net/*                 net
+re/gold/launcher/*            launcher
+
+# the port
+crates/rustyac-physics/*      physics fresh sound replays net browser ai_page dumps
+crates/rustyac-ode/*          physics fresh sound replays net browser ai_page dumps
+crates/rustyac-render/*       render gui shaders python
+crates/rustyac-dxbc/*         render gui shaders python
+crates/rustyac-gui/*          gui python
+crates/rustyac-python/*       python
+crates/rustyac-audio/*        sound
+crates/rustyac-launcher/*     launcher browser
+crates/rustyac-web/*          browser ai_page
+web/*                         browser ai_page
+crates/rustyac-net/*          net
+crates/rustyac-gateway/*      net
+server/*                      net
+# rustyac-game: the areas that build rustyac.exe, replay_hash, rustyac-web or rustyac-launcher
+# (render_oracle, net_golden and the shader tools don't build it); chassis_compare also builds
+# dump.rs and input_file.rs as its own (#[path]), so those two ask for physics as well
+crates/rustyac-game/src/dump.rs        physics fresh sound replays browser ai_page launcher dumps
+crates/rustyac-game/src/input_file.rs  physics fresh sound replays browser ai_page launcher dumps
+crates/rustyac-game/*         fresh sound replays browser ai_page launcher dumps
+
+# the oracles and checkers
+tools/car_oracle/*            physics fresh sound replays
+tools/chassis_compare/*       physics fresh
+tools/ode_oracle/*            physics
+tools/tyre_oracle/*           physics
+tools/render_oracle/*         render gui python fresh
+tools/audio_oracle/*          sound
+tools/launcher_oracle/*       launcher
+tools/net_gold/*              net
+tools/math_proof/*            browser
+tools/web_pack/*              browser ai_page
+
+# rustyac-math, rustyac-content, Cargo.toml, tools/proofs/lib.sh, run_all.sh and
+# anything else: no rule, so every area. Cargo.lock: the rules of the crates whose dependencies
+# changed in it (areas.sh, lock_crates.py), every area when that can't be told.

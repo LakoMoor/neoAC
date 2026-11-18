@@ -1,0 +1,871 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! What a frame of the proof is: which track, where the camera stands, what its lens and its
+//! shadow ranges are. Both sides get the very same numbers (the same code computes them in
+//! each process).
+
+use std::path::Path;
+
+use rustyac_physics::track::loader;
+use rustyac_physics::vecmath::Mat44f;
+
+use crate::Args;
+
+/// What both sides seed the C runtime's `rand()` with before the car is loaded.
+pub const RAND_SEED: u32 = 21;
+/// What both sides seed it with after the track's crowds are made (the game: the tick count).
+pub const RAND_SEED_TRACK: u32 = 22;
+
+/// `Game::gameTime.now` of a frame, milliseconds: what both sides blink by.
+pub fn game_time_ms(index: usize) -> f64 {
+    index as f64 * (1000.0 / 60.0)
+}
+
+/// The frame time both sides run with.
+pub const DT: f32 = 1.0 / 60.0;
+
+/// `Sim::cameraFadeTime`: `system/cfg/fades.ini [CHANGE_CAMERA_FADE] MS` (100 in the game's
+/// file) times 0.001f.
+pub fn camera_fade_time() -> f32 {
+    100.0 * f32::from_bits(0x3a83_126f)
+}
+
+pub struct ModelFile {
+    /// the path the model is opened by, on both sides
+    pub filename: String,
+    pub position: [f32; 3],
+    pub rotation: [f32; 3],
+}
+
+pub struct TrackSpec {
+    pub name: String,
+    /// the folder of the track's models, as text (its `texture` folder holds loose images that
+    /// replace embedded ones)
+    pub folder: String,
+    pub models: Vec<ModelFile>,
+    /// `data/lighting.ini` of the track (or of its layout): the sun's pitch and heading
+    pub sun_pitch: Option<f32>,
+    pub sun_heading: Option<f32>,
+    /// the folder that holds the track's (or its layout's) `data`
+    pub data_folder: String,
+    /// the layout (`CONFIG_TRACK`), empty for none
+    pub layout: String,
+}
+
+pub struct CarSpec {
+    /// the car's folder name under `content/cars`
+    pub name: String,
+    /// the car's folder as text (the models are opened by `<folder>/<file>`)
+    pub folder: String,
+    pub skin: String,
+    /// `car.ini [CONTROLS] STEER_LOCK`
+    pub steer_lock: f32,
+    /// `CarPhysicsInfo::tyreWidth`: `tyres.ini [FRONT] / [REAR] WIDTH`
+    pub tyre_width: [f32; 4],
+    /// `CarPhysicsInfo::maxGear`: `drivetrain.ini [GEARS] COUNT`
+    pub max_gear: i32,
+}
+
+/// `car.ini [PIT_STOP] TYRE_CHANGE_TIME_SEC` (10 s when the car does not say).
+pub fn tyre_change_time_sec(spec: &CarSpec) -> f32 {
+    let file = std::path::Path::new(&spec.folder).join("data/car.ini");
+    rustyac_physics::data::ini::IniReader::load(&file).ok().and_then(|ini| ini.get_float("PIT_STOP", "TYRE_CHANGE_TIME_SEC").ok()).unwrap_or(10.0)
+}
+
+#[derive(Clone, Copy)]
+pub struct CameraSpec {
+    /// `Camera::matrix`: rows right, up, back, position
+    pub matrix: [f32; 16],
+    pub fov: f32,
+    pub near: f32,
+    /// what the game camera writes; `None` leaves what `Sim::Sim` set (40000)
+    pub far: Option<f32>,
+    /// the arguments of `setShadowMapsSplits`
+    pub splits: [f32; 4],
+    /// `ACCameraManager::mode` (0 cockpit, 2 drivable) and `CameraDrivableManager::currentMode`
+    pub mode: i32,
+    pub drivable_mode: i32,
+}
+
+/// `ACCameraManager::currentGlobalCameraIndex` (+0xdc) for a camera: 0 in the cockpit, the
+/// drivable view's number + 1 (`ACCameraManager::setMode` 0x1400340d0).
+pub fn global_camera_index(camera: &CameraSpec) -> i32 {
+    if camera.mode == 2 {
+        camera.drivable_mode + 1
+    } else {
+        0
+    }
+}
+
+/// One frame of a run: the car's state of that frame and where the camera stands.
+pub struct Step {
+    pub state: rustyac_render::car::CarPhysicsState,
+    /// the states of the cars after the first (`--tapes`)
+    pub others: Vec<rustyac_render::car::CarPhysicsState>,
+    pub camera: CameraSpec,
+    pub extra: Extra,
+}
+
+/// Task 43c: the eight wings FormWings draws in a frame (`wingData` and the states' lift
+/// vectors, the same on both sides): six level wings and two fins, the lift turning with the
+/// frame.
+pub fn test_wings(index: usize) -> Vec<rustyac_render::wings::WingOutline> {
+    let t = index as f32 * 0.05;
+    (0..8)
+        .map(|i| {
+            let k = i as f32;
+            rustyac_render::wings::WingOutline {
+                position: [if i % 2 == 0 { -0.4 } else { 0.4 }, 0.3 + k * 0.07, 2.0 - k * 0.55],
+                span: 0.6 + k * 0.1,
+                chord: 0.2 + k * 0.03,
+                is_vertical: i >= 6,
+                lift_vector: [k * 40.0, 900.0 - k * 90.0 + 200.0 * (t + k).sin(), -50.0 * (t * 0.5).cos()],
+            }
+        })
+        .collect()
+}
+
+/// ACSuspension's test car: its ride pickup points, fuel tank and tyre radius.
+pub const SUS_RIDE: [[f32; 3]; 2] = [[0.0, -0.12, 1.25], [0.0, -0.1, -1.3]];
+pub const SUS_FUEL_TANK: [f32; 3] = [0.1, -0.15, -0.8];
+pub const SUS_TYRE_RADIUS: f32 = 0.31;
+
+/// ACSuspension's test lines of a wheel (`getDebugLines` with the car's matrix `b`): three
+/// arms from the body to near the wheel, turning with the frame.
+pub fn test_sus_lines(index: usize, wheel: usize, b: &rustyac_physics::vecmath::Mat44f) -> Vec<rustyac_physics::car::suspension::DebugLine> {
+    use rustyac_physics::car::suspension::{transform, DebugLine};
+    use rustyac_physics::vecmath::Vec3f;
+    let t = index as f32 * 0.1;
+    let (x, z) = (if wheel.is_multiple_of(2) { 0.75 } else { -0.75 }, if wheel < 2 { 1.25 } else { -1.3 });
+    let colors = [[1.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0], [4.0, 4.0, 4.0, 1.0]];
+    (0..3)
+        .map(|k| {
+            let kf = k as f32;
+            let car = Vec3f::new(x * 0.4, -0.15 + kf * 0.12, z + (kf - 1.0) * 0.2);
+            let tyre = Vec3f::new(x, -0.2 + kf * 0.15 + 0.03 * (t + wheel as f32).sin(), z);
+            DebugLine { p0: transform(&car, b), p1: transform(&tyre, b), color: colors[k] }
+        })
+        .collect()
+}
+
+/// The console variables `--set console=` knows (Task 43c): the car's, the track's, the
+/// camera's and `Sim`'s that change the picture. `graphicsPitchRotation` is in radians, as
+/// `Console::onSetVar` passes it on.
+pub const CONSOLE_VARS: [&str; 32] = [
+    "debugDamage", "hideHead", "headRoll", "headPitch", "headYaw", "headMaxG", "headFilter", "RPM_STEP", "RPM_ZERO", "SPEED_STEP", "SPEED_ZERO", "FUEL_STEP", "FUEL_ZERO", "FUEL_MIN", "wATER_STEP", "WATER_ZERO", "WATER_MIN", "debugDirt",
+    "graphicsOffset.x", "graphicsOffset.y", "graphicsOffset.z", "graphicsPitchRotation", "sunHeading", "sunPitch", "hideGroove", "maxLayer", "shadowBias", "mirrorpos.x", "mirrorpos.y", "mirrorpos.z", "lodDebug",
+    // Task 44c
+    "axisMode",
+];
+
+/// What a frame sets beside the car's physics state (`--set`), on both sides alike.
+#[derive(Clone, Copy, Debug)]
+pub struct Extra {
+    /// `RaceManager::currentSession.sessionType`
+    pub session_type: i32,
+    /// the car's slot among the cars in real time (0 the first); the leaderboard has it one higher
+    pub position: i32,
+    /// `Car::tractionControl` / `abs` current mode, the air temperature
+    pub tc: u32,
+    pub abs: u32,
+    pub air: f32,
+    /// `ReplayManager::isInReplaymode`, its time multiplier, `PauseMenu::visible`
+    pub replay: bool,
+    pub replay_scale: f32,
+    pub pause: bool,
+    /// `ReplayManager::status` (0 play, 1 pause, 2 stop, 3 rewind, 4 fast forward, 5 slow motion,
+    /// 6 replay mode begun, 7 ended); -1: none. A change fires `Sim::evOnReplayStatusChanged`
+    /// with this status, `replay_scale` and a slow-motion level of 2; a change of `pause` fires
+    /// `Sim::evOnPauseModeChanged`.
+    pub replay_status: i32,
+    /// `CarAvatar::wingsStatus`: eight wings at this angle (`None`: the car has no wing)
+    pub wing: Option<f32>,
+    /// Task 43c: the Wings app shows (FormWings::onRenderNode draws [`test_wings`] over the car;
+    /// the wings' angle is `wing`'s, else 0)
+    pub wings_app: bool,
+    /// Task 43c: console sets (`--set console=name:value+name:value`, at most four): numbers
+    /// into [`CONSOLE_VARS`] (1 the first, 0 none); done on both sides when they change
+    pub console: [(u8, f32); 4],
+    /// Task 43c: ACSuspension shown (`--set susapp=1`) and its keys held (`suskeys=<mask>`:
+    /// Backspace, Ctrl, keypad 1-4 from bit 0)
+    pub sus_app: bool,
+    pub sus_keys: u8,
+    /// `CarPhysicsInfo::kersMaxJ` (with `hasKERS`) and `ersMaxJ`
+    pub kers_max: f32,
+    pub ers_max: f32,
+    /// `DrivingAssistManager::idealLine`: what its `update` writes into the line's node
+    pub ideal: bool,
+    /// `RaceManager::getTimeToSessionStart`, ms (`--set tts=…`: the start lights and the
+    /// semaphore are built; the session starts that long after the frame)
+    pub tts: f32,
+    /// `--set newsession=<n>@<frame>`: `Sim::evOnNewSession` fires when the number changes
+    pub new_session: i32,
+    /// `--set pitstate=<n>`: the pit crew and the pit box marker are built; `PitStop::state`
+    /// as the lollipop man reads it (1: up, 4: down)
+    pub pit_state: i32,
+    /// what the display items read beside the physics state (`--set kmpl= cars= maxfuel=
+    /// torque= ratio= sessionlaps=`): `Car`'s fuel use (km per litre; 0: none yet), the cars of
+    /// the `Sim` (0: as the run has it), `CarPhysicsInfo::maxFuel`, the drivetrain's torque
+    /// and ratio (with `drive`: the port gets them), the race's laps
+    pub kmpl: f32,
+    pub cars: i32,
+    pub max_fuel: f64,
+    pub torque: f32,
+    pub ratio: f64,
+    pub drive: bool,
+    pub session_laps: u32,
+    /// `--set gate=<n>`: the time-attack gates are built; `TimeAttackGameStatus::sectorIndex`
+    /// while the mode runs (the gate of the next time line shows), -1: not running
+    pub gate: i32,
+    /// `--set focus=<n>`: `Sim::focusedCarIndex`
+    pub focus: i32,
+    /// `--set alllights=1`: every car's headlights are on (`Sim::applyCustomWeather` with a
+    /// weather that forces them)
+    pub all_lights: bool,
+    /// `--set crew=<seconds>`: from the first frame this is not 0 the tyre changers work: a
+    /// pit stop was committed with this tyre change time (`PitCrew::onPitStopBegin`)
+    pub crew: f32,
+}
+
+impl Extra {
+    /// `Car+0x3b18` and `Car+0x3b20` (metres and litres, doubles) for a fuel use, and what
+    /// `CarAvatar::getKmPerLiter` 0x1400d3510 makes of them.
+    pub fn fuel_use(&self) -> (f64, f64, f32) {
+        if self.kmpl == 0.0 {
+            return (0.0, 0.0, 0.0);
+        }
+        let (metres, litres) = (self.kmpl as f64 * 1000.0, 1.0f64);
+        (metres, litres, (metres * 0.001 / litres) as f32)
+    }
+}
+
+impl Default for Extra {
+    fn default() -> Extra {
+        Extra { session_type: 0, position: 0, tc: 0, abs: 0, air: 0.0, replay: false, replay_scale: 1.0, pause: false, replay_status: -1, wing: None, wings_app: false, console: [(0, 0.0); 4], sus_app: false, sus_keys: 0, kers_max: 0.0, ers_max: 0.0, ideal: false, tts: 0.0, new_session: 0, pit_state: 4, kmpl: 0.0, cars: 0, max_fuel: 0.0, torque: 0.0, ratio: 0.0, drive: false, session_laps: 0, gate: -1, focus: 0, all_lights: false, crew: 0.0 }
+    }
+}
+
+pub struct Frame {
+    pub name: String,
+    pub track: Option<TrackSpec>,
+    pub car: Option<CarSpec>,
+    /// the cars after the first (`--tapes`), in the order they are created (guid 1, 2, …)
+    pub others: Vec<CarSpec>,
+    /// `RaceManager::carsToBeLoaded`
+    pub cars_to_be_loaded: i32,
+    /// `--fade-at`: the frame at which the camera manager's fade begins
+    pub fade_at: Option<usize>,
+    /// the frames, in order; every one is updated and rendered
+    pub steps: Vec<Step>,
+    /// the first frame that is logged and read back (0 = the first one rendered)
+    pub capture: usize,
+    /// a sequence from a tape: every frame from `capture` on is compared
+    pub sequence: bool,
+    /// race.ini `[LIGHTING] SUN_ANGLE`
+    pub sun_angle: f32,
+    /// race.ini `[WEATHER] NAME`
+    pub weather: String,
+    /// the model `Sim::initStaticCubemap` draws into the reflection cube map
+    pub cubemap_model: String,
+    /// `--set ideal=…`: the ideal line is built, from this file (`data/ideal_line.ai`)
+    pub ideal_line: Option<String>,
+    /// `--set tts=…`: `StartingLights` and `StartingTrackSemaphore` are built
+    pub start_lights: bool,
+    /// `--set pitstate=…`: the lollipop men, the static crews and the pit box marker are built
+    pub pit_crew: bool,
+    /// `--set crew=…`: the four tyre changers (`PitCrew`) are built
+    pub tyre_crew: bool,
+    /// `--ghost <file>`: the ghost car (`GhostCar`) of that file: its recorder as the file fills it
+    pub ghost: Option<rustyac_physics::replay::ghost::GhostCarRecorder>,
+    /// `--set gate=…`: the time-attack gates are built
+    pub time_attack: bool,
+}
+
+/// The gates of the track's `data/overlays.ini`, one per time line of the port's track (without
+/// the file: the text the port makes as the game's `createAndSaveOverlays` writes it).
+pub fn time_attack_overlays(data_folder: &str) -> Vec<rustyac_render::time_attack::Overlay> {
+    let sectors = RAY_TRACK.with(|t| t.borrow().as_ref().map_or(0, |track| track.sectors_normalized_positions.len()));
+    match made_overlays().filter(|_| !Path::new(data_folder).join("data/overlays.ini").is_file()) {
+        Some(text) => rustyac_render::time_attack::read_made_overlays(&text, sectors),
+        None => rustyac_render::time_attack::read_overlays(Path::new(data_folder), sectors),
+    }
+}
+
+/// The port's `createAndSaveOverlays` text of the port's track.
+pub fn made_overlays() -> Option<String> {
+    RAY_TRACK.with(|t| t.borrow().as_ref().and_then(|track| rustyac_render::time_attack::create_overlays(&track.helper_nodes, track.ai_spline.as_ref()?)))
+}
+
+/// The matrices of the track's `AC_PIT_<n>` nodes as the port's physics has them (put on the
+/// road by `initRespawnPositionSet`).
+pub fn pit_matrices() -> Vec<Mat44f> {
+    RAY_TRACK.with(|t| {
+        let track = t.borrow();
+        let Some(track) = track.as_ref() else { return Vec::new() };
+        track.spawn_positions.get("PIT").map(|slots| slots.iter().map(|i| track.helper_nodes[*i].local).collect()).unwrap_or_default()
+    })
+}
+
+/// What the pit box marker's rules read in a frame.
+pub fn pit_inputs(step: &Step, body_position: [f32; 3]) -> rustyac_render::pit_crew::PitInputs {
+    rustyac_render::pit_crew::PitInputs {
+        car_position: body_position,
+        speed: step.state.speed,
+        in_pitlane: step.state.tyre_surface_def.iter().any(|d| d.is_pitlane),
+        session_type: step.extra.session_type,
+        pause_menu: step.extra.pause,
+        replay: step.extra.replay,
+    }
+}
+
+/// `RaceManager::currentSession.startTime` of a frame, and what the game then computes from
+/// it: (`hasSessionStarted`, `getTimeToSessionStart` as the float the lights use).
+pub fn session_start(index: usize, tts: f32) -> (f64, bool, f32) {
+    let now = game_time_ms(index);
+    let start = now + tts as f64;
+    (start, start < now, (start - now) as f32)
+}
+
+thread_local! {
+    /// The port's track, for the rays both sides cast (the game's `Track::rayCast` needs its
+    /// whole physics engine; the port's ray is proven against it by `car_oracle rays`).
+    static RAY_TRACK: std::cell::RefCell<Option<rustyac_physics::track::Track>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `Track::rayCast` 0x140278bb0 on the port's track: where the ray hits and the normal there.
+pub fn ray_cast(from: &[f32; 3], dir: &[f32; 3], length: f32) -> Option<([f32; 3], [f32; 3])> {
+    use rustyac_physics::vecmath::Vec3f;
+    RAY_TRACK.with(|t| {
+        let track = t.borrow();
+        let hit = track.as_ref()?.ray_cast_hit(&Vec3f::new(from[0], from[1], from[2]), &Vec3f::new(dir[0], dir[1], dir[2]), length)?;
+        Some((hit.contact.pos, hit.contact.normal))
+    })
+}
+
+/// `TrackAvatar::init3D` placing a model's top node (`models.ini` ROTATION / POSITION).
+pub fn placed(matrix: &[f32; 16], entry: &ModelFile) -> [f32; 16] {
+    let mut m = Mat44f::default();
+    for r in 0..4 {
+        for c in 0..4 {
+            m.m[r][c] = matrix[r * 4 + c];
+        }
+    }
+    let out = loader::top_node_matrix(&m, entry.position, entry.rotation);
+    let mut flat = [0.0f32; 16];
+    for r in 0..4 {
+        for c in 0..4 {
+            flat[r * 4 + c] = out.m[r][c];
+        }
+    }
+    flat
+}
+
+fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+fn normalized(a: [f32; 3]) -> [f32; 3] {
+    let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+    [a[0] / l, a[1] / l, a[2] / l]
+}
+
+/// A camera world matrix that stands at `eye` and looks at `target`.
+pub fn look_from(eye: [f32; 3], target: [f32; 3]) -> [f32; 16] {
+    let z = normalized(sub(eye, target));
+    let x = normalized(cross([0.0, 1.0, 0.0], z));
+    let y = cross(z, x);
+    [x[0], x[1], x[2], 0.0, y[0], y[1], y[2], 0.0, z[0], z[1], z[2], 0.0, eye[0], eye[1], eye[2], 1.0]
+}
+
+/// The frame the command line asks for.
+pub fn build(args: &Args) -> Result<Frame, String> {
+    let mut track = None;
+    // where the car would stand: the first grid slot, or the origin without a track
+    let mut place = [0.0f32, 0.0, 0.0];
+    let mut forward = [0.0f32, 0.0, 1.0];
+    // the first pit box and the direction a car stands in it
+    let mut pit_box: Option<([f32; 3], [f32; 3])> = None;
+    // the first time-attack gate: where it stands and the direction back along the line
+    let mut gate_box: Option<([f32; 3], [f32; 3])> = None;
+    if let Some(name) = &args.track {
+        let folder = args.game.join("content/tracks").join(name);
+        if !folder.is_dir() {
+            return Err(format!("no track folder {}", folder.display()));
+        }
+        let models = loader::track_models(&folder, &args.layout)?;
+        let mut files = Vec::new();
+        for model in &models {
+            files.push(ModelFile { filename: path_text(&model.file), position: model.position, rotation: model.rotation });
+        }
+        // TrackAvatar::TrackAvatar: `<data folder>/data/lighting.ini`
+        let data = if args.layout.is_empty() { folder.clone() } else { folder.join(&args.layout) };
+        let (mut sun_pitch, mut sun_heading) = (None, None);
+        if let Ok(ini) = rustyac_physics::data::ini::IniReader::load(&data.join("data/lighting.ini")) {
+            sun_pitch = Some(ini.get_float("LIGHTING", "SUN_PITCH_ANGLE").unwrap_or(0.0));
+            sun_heading = Some(ini.get_float("LIGHTING", "SUN_HEADING_ANGLE").unwrap_or(0.0));
+        }
+        track = Some(TrackSpec { name: name.clone(), folder: path_text(&folder), models: files, sun_pitch, sun_heading, data_folder: path_text(&data), layout: args.layout.clone() });
+        let (physical, _) = loader::load_track(&folder, &args.layout)?;
+        let pose = ["START", "HOTLAP_START", "PIT"].iter().find_map(|set| physical.spawn_pose(set, 0));
+        if let Some((position, tail)) = pose {
+            place = [position.x, position.y, position.z];
+            forward = [-tail.x, -tail.y, -tail.z];
+        }
+        pit_box = physical.spawn_pose("PIT", 0).map(|(position, tail)| ([position.x, position.y, position.z], [-tail.x, -tail.y, -tail.z]));
+        RAY_TRACK.with(|t| *t.borrow_mut() = Some(physical));
+        gate_box = time_attack_overlays(&path_text(&data)).first().map(|ov| (ov.world_position, ov.orientation));
+    }
+    // the car, where its physics state has it
+    let mut car = None;
+    let mut states: Vec<rustyac_render::car::CarPhysicsState> = Vec::new();
+    let mut eyes = [0.0f32, 1.0, 0.0];
+    let mut graphics_offset = [0.0f32; 3];
+    let first_tape = match (&args.tape, &args.tapes) {
+        (Some(tape), _) => Some(tape.clone()),
+        (None, Some(prefix)) => Some(tape_of(prefix, 0)),
+        (None, None) => None,
+    };
+    let first_car = match (&args.car, &args.tapes, args.poses.first()) {
+        (Some(name), _, _) => Some(name.clone()),
+        (None, Some(prefix), _) => Some(tape_car(&tape_of(prefix, 0))?),
+        (None, None, Some((name, _))) => Some(name.clone()),
+        (None, None, None) => None,
+    };
+    let first_pose = args.pose.clone().or_else(|| args.poses.first().map(|p| p.1.clone()));
+    if let Some(name) = &first_car {
+        let folder = args.game.join("content/cars").join(name);
+        if !folder.is_dir() {
+            return Err(format!("no car folder {}", folder.display()));
+        }
+        states = match (&first_tape, &first_pose) {
+            (Some(tape), _) => read_tape(tape, args.tape_from, args.frames)?,
+            (None, Some(file)) => vec![rustyac_render::car::CarPhysicsState::from_bytes(&std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?)?; args.capture + 1],
+            (None, None) => return Err("--car needs --pose <file> (rustyac.exe --screenshot … --pose-out <file> writes one) or --tape <file>".into()),
+        };
+        if states.is_empty() {
+            return Err("the tape has no frame in that range".into());
+        }
+        let (spec, e, g) = car_spec(args, name, 0)?;
+        eyes = e;
+        graphics_offset = g;
+        car = Some(spec);
+    }
+    // the cars after the first: `<prefix>.car<n>.audiotape`
+    let mut others: Vec<CarSpec> = Vec::new();
+    let mut other_states: Vec<Vec<rustyac_render::car::CarPhysicsState>> = Vec::new();
+    let mut seats = vec![(eyes, graphics_offset)];
+    if let Some(prefix) = &args.tapes {
+        let mut index = 1;
+        while index < args.max_cars {
+            let tape = tape_of(prefix, index);
+            if !tape.is_file() {
+                break;
+            }
+            let name = tape_car(&tape)?;
+            let (spec, e, g) = car_spec(args, &name, index)?;
+            let list = read_tape(&tape, args.tape_from, args.frames)?;
+            if list.len() != states.len() {
+                return Err(format!("{}: {} frames, the first car's tape has {}", tape.display(), list.len(), states.len()));
+            }
+            others.push(spec);
+            other_states.push(list);
+            seats.push((e, g));
+            index += 1;
+        }
+    }
+    // … or each from its pose file
+    for (index, (name, file)) in args.poses.iter().enumerate().skip(1) {
+        let (spec, e, g) = car_spec(args, name, index)?;
+        let pose = rustyac_render::car::CarPhysicsState::from_bytes(&std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?)?;
+        others.push(spec);
+        other_states.push(vec![pose; states.len()]);
+        seats.push((e, g));
+    }
+    // where the sun is seen from the car (for the view into the sun): the same angles the
+    // lighting uses, to the precision a camera needs
+    let sun_from = {
+        let (pitch, heading) = match &track {
+            Some(t) => (t.sun_pitch.unwrap_or(45.0), t.sun_heading.unwrap_or(0.0)),
+            None => (45.0, 0.0),
+        };
+        let (p, a, h) = (pitch.to_radians(), args.sun_angle.to_radians(), heading.to_radians());
+        // (0, -1, 0) through Rx(pitch) Rz(angle) Ry(heading), row vectors
+        let v1 = [0.0, -p.cos(), -p.sin()];
+        let v2 = [v1[0] * a.cos() - v1[1] * a.sin(), v1[0] * a.sin() + v1[1] * a.cos(), v1[2]];
+        let light = [v2[0] * h.cos() + v2[2] * h.sin(), v2[1], -v2[0] * h.sin() + v2[2] * h.cos()];
+        [-light[0], -light[1], -light[2]]
+    };
+    // the camera of a frame: it follows the car's state of that frame
+    let camera_of = |state: Option<&rustyac_render::car::CarPhysicsState>, seat: ([f32; 3], [f32; 3])| -> Result<CameraSpec, String> {
+        let (eyes, graphics_offset) = seat;
+        let (mut place, mut forward) = (place, forward);
+        if let Some(s) = state {
+            let w = s.world_matrix.m;
+            place = [w[3][0], w[3][1], w[3][2]];
+            forward = [w[2][0], w[2][1], w[2][2]];
+        }
+        let at = |ahead: f32, up: f32| [place[0] + forward[0] * ahead, place[1] + up, place[2] + forward[2] * ahead];
+        // the driver's eyes: car axes are +x left, +y up, +z forward
+        // a point given from the driver's eyes: metres up and ahead in the car's axes
+        let eye_offset = |up: f32, ahead: f32| match state {
+            Some(s) => {
+                let w = s.world_matrix.m;
+                let p = [eyes[0], eyes[1] + up, eyes[2] + ahead];
+                [p[0] * w[0][0] + p[1] * w[1][0] + p[2] * w[2][0] + w[3][0], p[0] * w[0][1] + p[1] * w[1][1] + p[2] * w[2][1] + w[3][1], p[0] * w[0][2] + p[1] * w[1][2] + p[2] * w[2][2] + w[3][2]]
+            }
+            None => at(ahead, 1.0 + up),
+        };
+        let eye_point = |ahead: f32| eye_offset(0.0, ahead);
+        // the eyes where the game has them: on the model, which sits GRAPHICS_OFFSET from the
+        // physics body ("eyes" of Task 20 leaves the offset out and looks from above the roof)
+        let seat = |up: f32, ahead: f32| eye_offset(up + graphics_offset[1], ahead + graphics_offset[2]);
+        match args.view.as_str() {
+            // from the pit lane ahead of the first pit box, back at the box: the lollipop man,
+            // the crew, the marker ("pit2": from the side)
+            "pit" | "pit2" => {
+                let (p, f) = pit_box.ok_or("the view pit: the track has no AC_PIT_0")?;
+                let eye = if args.view == "pit" { [p[0] + f[0] * 13.0, p[1] + 2.2, p[2] + f[2] * 13.0] } else { [p[0] + f[0] * 4.0 - f[2] * 9.0, p[1] + 1.8, p[2] + f[2] * 4.0 + f[0] * 9.0] };
+                let target = [p[0] + f[0] * 3.0, p[1] + 1.0, p[2] + f[2] * 3.0];
+                return Ok(CameraSpec { matrix: look_from(eye, target), fov: 60.0, near: 0.1, far: None, splits: [10.0, 50.0, 150.0, 500.0], mode: 2, drivable_mode: 0 });
+            }
+            // on the road 25 m before the first time-attack gate, looking at it
+            "gate" => {
+                let (p, back) = gate_box.ok_or("the view gate: the track has no data/overlays.ini")?;
+                let eye = [p[0] + back[0] * 25.0, p[1] + 1.5, p[2] + back[2] * 25.0];
+                return Ok(CameraSpec { matrix: look_from(eye, [p[0], p[1] + 2.5, p[2]]), fov: 60.0, near: 0.1, far: None, splits: [10.0, 50.0, 150.0, 500.0], mode: 2, drivable_mode: 0 });
+            }
+            // looking ahead over the wheel
+            "onboard" => return Ok(CameraSpec { matrix: look_from(seat(0.0, 0.0), seat(-0.12, 1.0)), fov: 56.0, near: 0.05, far: None, splits: [f32::from_bits(0x3fa6_6666), 80.0, 250.0, 500.0], mode: 0, drivable_mode: 0 }),
+            // looking down at the dials and the hands
+            "dash" => return Ok(CameraSpec { matrix: look_from(seat(0.0, 0.0), seat(-0.42, 1.0)), fov: 56.0, near: 0.05, far: None, splits: [f32::from_bits(0x3fa6_6666), 80.0, 250.0, 500.0], mode: 0, drivable_mode: 0 }),
+            _ => {}
+        }
+        camera_for(&args.view, &at, &eye_point, sun_from, state)
+    };
+    let mut extras = vec![Extra::default(); states.len()];
+    for (index, state) in states.iter_mut().enumerate() {
+        for (name, value, from) in &args.set {
+            if index >= *from {
+                apply_set(state, &mut extras[index], name, value)?;
+                count_down(&mut extras[index], name, index - *from);
+            }
+        }
+        if extras[index].focus < 0 || extras[index].focus as usize > others.len() {
+            return Err(format!("--set focus={}: there are {} cars", extras[index].focus, others.len() + 1));
+        }
+        if extras[index].all_lights {
+            state.status_bytes |= 1;
+            for list in other_states.iter_mut() {
+                list[index].status_bytes |= 1;
+            }
+        }
+    }
+    let mut steps: Vec<Step> = if states.is_empty() {
+        let camera = camera_of(None, seats[0])?;
+        // without a car: `--frames` frames when asked for (things of the track that move)
+        let count = if args.frames_given { args.frames.max(args.capture + 1) } else { args.capture + 1 };
+        let mut steps = Vec::with_capacity(count);
+        for index in 0..count {
+            let mut state = rustyac_render::car::CarPhysicsState::at_origin();
+            let mut extra = Extra::default();
+            for (name, value, from) in &args.set {
+                if index >= *from {
+                    apply_set(&mut state, &mut extra, name, value)?;
+                    count_down(&mut extra, name, index - *from);
+                }
+            }
+            steps.push(Step { state: rustyac_render::car::CarPhysicsState::at_origin(), others: Vec::new(), camera, extra });
+        }
+        steps
+    } else {
+        let mut steps = Vec::with_capacity(states.len());
+        for (index, (state, extra)) in states.iter().zip(&extras).enumerate() {
+            let step_others: Vec<rustyac_render::car::CarPhysicsState> = other_states.iter().map(|list| list[index]).collect();
+            // the camera follows the focused car
+            let focus = extra.focus as usize;
+            let followed = if focus == 0 { state } else { &step_others[focus - 1] };
+            steps.push(Step { state: *state, camera: camera_of(Some(followed), seats[focus])?, extra: *extra, others: step_others });
+        }
+        steps
+    };
+    let name = match &args.track {
+        Some(t) => format!("{t}_{}", args.view),
+        None => format!("empty_{}", args.view),
+    };
+    let name = match (&car, &first_tape, &first_pose) {
+        (Some(c), Some(tape), _) => format!("{name}_{}_{}_{}_{}", c.name, tape.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), args.tape_from, args.frames),
+        (Some(c), None, Some(pose)) => format!("{name}_{}_{}", c.name, pose.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()),
+        _ => name,
+    };
+    let name = if others.is_empty() { name } else { format!("{name}_{}cars", others.len() + 1) };
+    let name = if args.label.is_empty() { name } else { format!("{name}_{}", args.label) };
+    let name = if args.sun_angle == -16.0 { name } else { format!("{name}_sun{}", args.sun_angle) };
+    let p = crate::root::profile();
+    let t = crate::root::TASK_20;
+    let name = if (p.shadow_map_size, p.cubemap_size, p.world_detail, p.anisotropic) == (t.shadow_map_size, t.cubemap_size, t.world_detail, t.anisotropic) { name } else { format!("{name}_s{}c{}w{}a{}", p.shadow_map_size, p.cubemap_size, p.world_detail, p.anisotropic) };
+    let name = if p.cubemap_faces_per_frame == 0 && p.cubemap_far_plane == 0.0 { name } else { format!("{name}_f{}far{}", p.cubemap_faces_per_frame, p.cubemap_far_plane) };
+    let mut cubemap_model = format!("{}/content/objects3D/cubemap_model.kn5", path_text(&args.game));
+    if let Some(track) = &track {
+        let own = format!("{}/cubemap_model.kn5", track.folder);
+        if Path::new(&own).is_file() {
+            cubemap_model = own;
+        }
+    }
+    let sequence = first_tape.is_some() || (states.is_empty() && args.frames_given);
+    let ideal_line = match (&track, args.set.iter().any(|(name, _, _)| name == "ideal")) {
+        (Some(track), true) => {
+            let file = format!("{}/data/ideal_line.ai", track.data_folder);
+            if !Path::new(&file).is_file() {
+                return Err(format!("--set ideal: no {file}"));
+            }
+            Some(file)
+        }
+        _ => None,
+    };
+    let capture = if sequence { args.capture.min(steps.len() - 1) } else { args.capture };
+    let cars_to_be_loaded = if args.loaded > 0 { args.loaded } else { others.len() as i32 + 1 };
+    // --ghost: the file's ghost, shown from the start; the car's lap time runs with the frames
+    let mut ghost = None;
+    if let Some(file) = &args.ghost {
+        use rustyac_physics::replay::ghost::{GhostCarRecorder, GhostNames};
+        let bytes = std::fs::read(file).map_err(|e| format!("{file}: {e}"))?;
+        let mut recorder = GhostCarRecorder::new("", false, true);
+        recorder.load_bytes(&bytes, &GhostNames::default());
+        let names = recorder.names.clone();
+        if !recorder.load_bytes(&bytes, &names) {
+            return Err(format!("{file}: not a ghost car file"));
+        }
+        recorder.line_passed_for_the_first_time = true;
+        for (i, step) in steps.iter_mut().enumerate() {
+            step.state.lap_time = (args.ghost_lap_ms + i as f64 * 1000.0 / 60.0) as u32;
+        }
+        ghost = Some(recorder);
+    }
+    Ok(Frame { ghost, name, track, car, others, cars_to_be_loaded, fade_at: args.fade_at, steps, capture, sequence, sun_angle: args.sun_angle, weather: args.weather.clone(), cubemap_model, ideal_line, start_lights: args.set.iter().any(|(name, _, _)| name == "tts"), pit_crew: args.set.iter().any(|(name, _, _)| name == "pitstate"), tyre_crew: args.set.iter().any(|(name, _, _)| name == "crew"), time_attack: args.set.iter().any(|(name, _, _)| name == "gate") })
+}
+
+/// `<prefix>.car<n>.audiotape`.
+pub fn tape_of(prefix: &Path, index: usize) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("{}.car{index}.audiotape", prefix.display()))
+}
+
+/// The car a tape's header names (`car=`).
+pub fn tape_car(tape: &Path) -> Result<String, String> {
+    use std::io::Read as _;
+    let mut head = vec![0u8; 4096];
+    let read = std::fs::File::open(tape).and_then(|mut f| f.read(&mut head)).map_err(|e| format!("{}: {e}", tape.display()))?;
+    String::from_utf8_lossy(&head[..read]).lines().take_while(|l| !l.is_empty()).find_map(|l| l.strip_prefix("car=").map(str::to_string)).ok_or_else(|| format!("{}: no car= in the header", tape.display()))
+}
+
+/// What both sides know of a car before it is loaded, its `DRIVEREYES` and `GRAPHICS_OFFSET`.
+/// Car `index` of several takes the skin folder number `index` by name (from the first again
+/// when the car has fewer), so that the cars of a field differ.
+fn car_spec(args: &Args, name: &str, index: usize) -> Result<(CarSpec, [f32; 3], [f32; 3]), String> {
+    let folder = args.game.join("content/cars").join(name);
+    if !folder.is_dir() {
+        return Err(format!("no car folder {}", folder.display()));
+    }
+    let car_ini = rustyac_physics::data::ini::IniReader::load(&folder.join("data/car.ini"))?;
+    let steer_lock = car_ini.get_float("CONTROLS", "STEER_LOCK").unwrap_or(0.0);
+    let eyes = car_ini.get_float3("GRAPHICS", "DRIVEREYES").unwrap_or([0.0f32, 1.0, 0.0]);
+    let graphics_offset = car_ini.get_float3("BASIC", "GRAPHICS_OFFSET").unwrap_or([0.0; 3]);
+    let skin = match (&args.skin, index) {
+        (Some(skin), 0) => skin.clone(),
+        _ => {
+            let mut skins: Vec<String> = std::fs::read_dir(folder.join("skins")).map_err(|e| e.to_string())?.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+            skins.sort();
+            if skins.is_empty() { String::new() } else { skins[index % skins.len()].clone() }
+        }
+    };
+    let mut tyre_width = [0.0f32; 4];
+    if let Ok(tyres) = rustyac_physics::data::ini::IniReader::load(&folder.join("data/tyres.ini")) {
+        let front = tyres.get_float("FRONT", "WIDTH").unwrap_or(0.0);
+        let rear = tyres.get_float("REAR", "WIDTH").unwrap_or(0.0);
+        tyre_width = [front, front, rear, rear];
+    }
+    let max_gear = rustyac_physics::data::ini::IniReader::load(&folder.join("data/drivetrain.ini")).ok().and_then(|i| i.get_int("GEARS", "COUNT").ok()).unwrap_or(0);
+    // a made-up test car is read from the folder the oracle lays out for the port
+    let port_folder = if args.car_data.is_some() && index == 0 { args.root.join("port_side/content/cars").join(name) } else { folder.clone() };
+    Ok((CarSpec { name: name.to_string(), folder: path_text(&port_folder), skin, steer_lock, tyre_width, max_gear }, eyes, graphics_offset))
+}
+
+/// The picture frames `from .. from + count` of a tape written by `car_oracle run
+/// --audio-tape`: a header of `key=value` lines and an empty line, then records: 1 + 0x48
+/// bytes (a physics event) or 2 + a step count (u32) + the game's `CarPhysicsState` (0xb70
+/// bytes) + 1 byte.
+pub fn read_tape(path: &Path, from: usize, count: usize) -> Result<Vec<rustyac_render::car::CarPhysicsState>, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let head = bytes.windows(2).position(|w| w == [10u8, 10u8]).ok_or("the tape has no header")?;
+    let mut at = head + 2;
+    let mut index = 0usize;
+    let mut out = Vec::new();
+    while at < bytes.len() && out.len() < count {
+        match bytes[at] {
+            1 => at += 1 + 0x48,
+            2 => {
+                let state = bytes.get(at + 5..at + 5 + rustyac_render::state::GAME_SIZE).ok_or("the tape ends inside a frame")?;
+                if index >= from {
+                    out.push(rustyac_render::car::CarPhysicsState::from_game_bytes(state)?);
+                }
+                index += 1;
+                at += 5 + rustyac_render::state::GAME_SIZE + 1;
+            }
+            other => return Err(format!("{}: a record of kind {other} at byte {at}", path.display())),
+        }
+    }
+    Ok(out)
+}
+
+/// `--set tts=<ms>@<frame>` is the time to the start at that frame: it runs down from there.
+fn count_down(x: &mut Extra, name: &str, frames: usize) {
+    if name == "tts" {
+        x.tts -= frames as f32 * (1000.0 / 60.0);
+    }
+}
+
+/// One `--set name=value`.
+fn apply_set(s: &mut rustyac_render::car::CarPhysicsState, x: &mut Extra, name: &str, value: &str) -> Result<(), String> {
+    let number = |v: &str| v.parse::<f32>().map_err(|_| format!("--set {name}={v}: not a number"));
+    let on = |v: &str| -> Result<bool, String> { Ok(number(v)? != 0.0) };
+    match name {
+        "lights" => s.status_bytes = (s.status_bytes & !1) | on(value)? as u32,
+        "flash" => s.actions_state = (s.actions_state & !0x400) | if on(value)? { 0x400 } else { 0 },
+        "brake" => s.brake = number(value)?,
+        "gas" => s.gas = number(value)?,
+        "gear" => s.gear = number(value)? as i32,
+        "rpm" => s.engine_rpm = number(value)?,
+        "limiter" => s.limiter_rpm = number(value)? as i32,
+        "kmh" => s.speed = number(value)? / 3.6,
+        "fuel" => s.fuel = number(value)?,
+        "turbo" => s.turbo_boost = number(value)?,
+        "water" => s.water = number(value)?,
+        "kers" => s.kers_is_charging = on(value)?,
+        "p2p" => s.p2p_status = number(value)? as u8,
+        "p2pn" => s.p2p_activations = number(value)? as u8,
+        "session" => x.session_type = number(value)? as i32,
+        "pos" => x.position = number(value)? as i32,
+        "tc" => x.tc = number(value)? as u32,
+        "abs" => x.abs = number(value)? as u32,
+        "air" => x.air = number(value)?,
+        "replay" => {
+            x.replay = number(value)? != 0.0;
+            x.replay_scale = number(value)?;
+        }
+        "rscale" => x.replay_scale = number(value)?,
+        "rstatus" => x.replay_status = number(value)? as i32,
+        "pause" => x.pause = on(value)?,
+        "ideal" => x.ideal = on(value)?,
+        "tts" => x.tts = number(value)?,
+        "newsession" => x.new_session = number(value)? as i32,
+        "pitstate" => x.pit_state = number(value)? as i32,
+        "crew" => x.crew = number(value)?,
+        "kmpl" => x.kmpl = number(value)?,
+        "cars" => x.cars = number(value)? as i32,
+        "maxfuel" => x.max_fuel = number(value)? as f64,
+        "torque" => {
+            x.torque = number(value)?;
+            x.drive = true;
+        }
+        "ratio" => {
+            x.ratio = number(value)? as f64;
+            x.drive = true;
+        }
+        "sessionlaps" => x.session_laps = number(value)? as u32,
+        "gate" => x.gate = number(value)? as i32,
+        "focus" => x.focus = number(value)? as i32,
+        "alllights" => x.all_lights = on(value)?,
+        "turbolevel" => s.turbo_boost_level = number(value)?,
+        "fuellaps" => s.fuel_laps = number(value)?,
+        "accg" => {
+            let parts: Vec<&str> = value.split(':').collect();
+            if parts.len() != 3 {
+                return Err("--set accg=x:y:z".into());
+            }
+            for (slot, part) in s.acc_g.iter_mut().zip(parts) {
+                *slot = number(part)?;
+            }
+        }
+        "wing" => x.wing = Some(number(value)?),
+        "wingsapp" => x.wings_app = on(value)?,
+        "console" => {
+            x.console = [(0, 0.0); 4];
+            for (slot, set) in x.console.iter_mut().zip(value.split('+')) {
+                let (name, v) = set.split_once(':').ok_or("--set console=name:value+name:value")?;
+                let i = CONSOLE_VARS.iter().position(|n| *n == name).ok_or_else(|| format!("--set console: {name} is not one of {CONSOLE_VARS:?}"))?;
+                *slot = (i as u8 + 1, number(v)?);
+            }
+        }
+        "susapp" => x.sus_app = on(value)?,
+        "suskeys" => x.sus_keys = number(value)? as u8,
+        "kersmax" => x.kers_max = number(value)?,
+        "ersmax" => x.ers_max = number(value)?,
+        "kerskj" => s.kers_current_kj = number(value)?,
+        "kerscharge" => s.kers_charge = number(value)?,
+        "perf" => s.performance_meter = number(value)?,
+        "laps" => s.lap_count = number(value)? as u32,
+        "pit" => s.tyre_surface_def.iter_mut().for_each(|d| d.is_pitlane = value != "0"),
+        "dirt" => {
+            let k = number(value)?;
+            s.tyre_surface_def.iter_mut().for_each(|d| d.dirt_additive_k = k);
+        }
+        "damage" => {
+            let parts: Vec<&str> = value.split(':').collect();
+            if parts.len() != 5 {
+                return Err("--set damage=front:rear:left:right:centre".into());
+            }
+            for (slot, part) in s.damage_zone_level.iter_mut().zip(parts) {
+                *slot = number(part)?;
+            }
+        }
+        other => return Err(format!("--set {other}: not one of lights flash brake gas gear rpm limiter kmh fuel turbo water kers p2p p2pn session pos tc abs air replay rscale rstatus pause ideal tts newsession pitstate crew kmpl cars maxfuel torque ratio sessionlaps gate turbolevel fuellaps accg wing kersmax ersmax kerskj kerscharge perf laps pit dirt damage focus alllights")),
+    }
+    Ok(())
+}
+
+type Point<'a> = &'a dyn Fn(f32, f32) -> [f32; 3];
+
+/// The lens and the shadow ranges the game cameras use (CameraDrivableManager::updateChase
+/// 0x1400c7120, ::updateDash 0x1400c7b50, CameraOnBoardFree::update 0x140115db0).
+fn camera_for(view: &str, at: Point, eye_point: &dyn Fn(f32) -> [f32; 3], sun_from: [f32; 3], state: Option<&rustyac_render::car::CarPhysicsState>) -> Result<CameraSpec, String> {
+    let camera = match view {
+        "chase" => CameraSpec { matrix: look_from(at(-6.0, 2.0), at(0.0, 1.0)), fov: 60.0, near: 1.0, far: None, splits: [10.0, 50.0, 150.0, 500.0], mode: 2, drivable_mode: 0 },
+        "cockpit" => CameraSpec { matrix: look_from(at(0.0, 1.0), at(10.0, 0.9)), fov: 56.0, near: 0.05, far: None, splits: [f32::from_bits(0x3fa6_6666), 80.0, 250.0, 500.0], mode: 0, drivable_mode: 0 },
+        "free" => CameraSpec { matrix: look_from(at(-30.0, 15.0), at(20.0, 0.0)), fov: 60.0, near: 0.1, far: None, splits: [10.0, 80.0, 300.0, 1500.0], mode: 2, drivable_mode: 0 },
+        // from the driver's eyes
+        "eyes" => CameraSpec { matrix: look_from(eye_point(0.0), eye_point(10.0)), fov: 56.0, near: 0.05, far: None, splits: [f32::from_bits(0x3fa6_6666), 80.0, 250.0, 500.0], mode: 0, drivable_mode: 0 },
+        // a chase camera on the far side of the car from the sun, looking at it over the car
+        "sun" => {
+            let target = at(0.0, 1.0);
+            let eye = [target[0] - sun_from[0] * 7.0, target[1] + 0.6, target[2] - sun_from[2] * 7.0];
+            let look = [eye[0] + sun_from[0], eye[1] + sun_from[1], eye[2] + sun_from[2]];
+            CameraSpec { matrix: look_from(eye, look), fov: 60.0, near: 1.0, far: None, splits: [10.0, 50.0, 150.0, 500.0], mode: 2, drivable_mode: 0 }
+        }
+        // from 3.5 km above the world's origin, looking down: what drifts over the track
+        "sky" => CameraSpec { matrix: look_from([0.0, 3500.0, -10.0], [0.0, 0.0, 0.0]), fov: 90.0, near: 1.0, far: None, splits: [10.0, 50.0, 150.0, 500.0], mode: 2, drivable_mode: 0 },
+        // far enough for the second level of detail
+        "far" => CameraSpec { matrix: look_from(at(-25.0, 4.0), at(0.0, 1.0)), fov: 60.0, near: 1.0, far: None, splits: [10.0, 50.0, 150.0, 500.0], mode: 2, drivable_mode: 0 },
+        // beside the car, low: the wheels, the discs, the ground under the car
+        "side" => {
+            let w = state.map(|s| s.world_matrix.m).unwrap_or(Mat44f::IDENTITY.m);
+            let target = at(0.0, 0.5);
+            let ahead = at(1.5, 0.5);
+            let eye = [ahead[0] + w[0][0] * 4.5, target[1] + 0.6, ahead[2] + w[0][2] * 4.5];
+            CameraSpec { matrix: look_from(eye, target), fov: 60.0, near: 1.0, far: None, splits: [10.0, 50.0, 150.0, 500.0], mode: 2, drivable_mode: 0 }
+        }
+        // behind the car, close: the rear lights, the exhausts
+        "rear" => CameraSpec { matrix: look_from(at(-4.5, 1.2), at(0.0, 0.6)), fov: 60.0, near: 1.0, far: None, splits: [10.0, 50.0, 150.0, 500.0], mode: 2, drivable_mode: 0 },
+        // in front of the car, close: the head lights, the windscreen, the driver
+        "front" => CameraSpec { matrix: look_from(at(4.5, 1.2), at(0.0, 0.6)), fov: 60.0, near: 1.0, far: None, splits: [10.0, 50.0, 150.0, 500.0], mode: 2, drivable_mode: 0 },
+        other => return Err(format!("the view {other:?} is not one of chase, cockpit, free, eyes, onboard, dash, sun, far, side, rear, front")),
+    };
+    Ok(camera)
+}
+
+/// A path as text with forward slashes.
+pub fn path_text(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}

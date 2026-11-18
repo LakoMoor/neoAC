@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Builds and tests every push to master and every pull request, on GitHub's own Windows machine,
+# and builds the browser preview (the code only: the site has no content in it).
+# No Assetto Corsa file is here or is fetched: the tests that need the game's folder print
+# NOT TESTED and pass.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build and test
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          # the version, components and targets in rust-toolchain.toml
+          rustup toolchain install --no-self-update
+          rustc --version
+          cargo --version
+
+      - name: Cache Cargo downloads and build output
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            tools/*/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock', 'tools/*/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+
+      # MSVCR120.dll: the maths of the game itself, which the tests compare against
+      - name: Install the Visual C++ 2013 runtime
+        run: |
+          choco install vcredist2013 -y --no-progress
+          if [ ! -f "$SYSTEMROOT/System32/msvcr120.dll" ]; then
+            echo "::error::MSVCR120.dll is not in System32 after installing vcredist2013: the tests would run on Rust's own maths"
+            exit 1
+          fi
+
+      - name: Build
+        run: cargo build --release --workspace --locked
+
+      - name: Test
+        run: cargo test --release --workspace --locked
+
+      # a warning fails the run. Where clippy's rewrite would change what bit-exact code computes,
+      # the code has an #[allow] with its reason instead.
+      - name: Clippy
+        run: cargo clippy --workspace --locked --all-targets -- -D warnings
+
+      # build only: they need acs.exe to run
+      - name: Build the tools
+        run: |
+          for manifest in tools/*/Cargo.toml; do
+            echo "::group::$manifest"
+            cargo build --release --locked --manifest-path "$manifest"
+            echo "::endgroup::"
+          done
+
+      # The browser preview: the wasm build of the physics and the page around it, into
+      # dist-web/site/ (wasm-bindgen and wasm-opt are pinned in web/build.py and downloaded into
+      # target/web-tools). Code only: no car, no track, no preview pack.
+      - name: Build the browser preview
+        run: python web/build.py
+
+      - name: Clippy (wasm)
+        run: |
+          cargo clippy -p rustyac-web -p rustyac-net --lib --target wasm32-unknown-unknown --locked -- -D warnings
+          cargo clippy -p rustyac-math -p rustyac-ode -p rustyac-content -p rustyac-physics -p rustyac-net -p rustyac-game --target wasm32-wasip1 --locked -- -D warnings
+
+      # the replay runner of the wasm-against-desktop proof (docs/port/web.md); running it needs
+      # the game's folder, building it does not
+      - name: Build the WASI replay runner
+        run: cargo build --release --locked -p rustyac-game --target wasm32-wasip1

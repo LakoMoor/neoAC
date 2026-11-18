@@ -1,0 +1,272 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rustyAC browser preview</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="launcher" hidden></div>
+<div id="loading" hidden>
+  <p id="loading-text"></p>
+  <div id="loading-progress" hidden><div id="loading-bar"></div></div>
+  <div id="loading-stall" hidden>
+    <p id="loading-wait"></p>
+    <button id="loading-copy">Copy diagnostics</button> <button id="loading-back">Back to the menu</button>
+  </div>
+</div>
+<div id="corner" hidden>
+  <button id="source-switch" hidden></button>
+  <button id="source-list" hidden>Open it as a file list</button>
+</div>
+
+<div id="hud" hidden>
+  <div id="hud-main">
+    <span id="hud-gear">N</span>
+    <span id="hud-speed">0</span><span class="unit">km/h</span>
+    <div id="hud-rpm"><div id="hud-rpm-bar"></div></div>
+    <span id="hud-rpm-text">0 rpm</span>
+  </div>
+  <div id="hud-lap">
+    <div>lap <b id="hud-lap-time">-:--.---</b></div>
+    <div>last <span id="hud-last">-:--.---</span></div>
+    <div>best <span id="hud-best">-:--.---</span></div>
+  </div>
+  <div id="hud-info"></div>
+  <div id="hud-aids"><span id="hud-tc"></span><span id="hud-abs"></span><span id="hud-bias"></span></div>
+  <div id="hud-note" hidden></div>
+  <div id="hud-online" hidden></div>
+  <div id="hud-referee" hidden></div>
+  <div id="hud-referee-centre" hidden></div>
+  <div id="hud-referee-results" hidden></div>
+  <div id="hud-perf"></div>
+</div>
+<input id="chat" hidden maxlength="120" autocomplete="off" placeholder="say something: Enter sends, Esc closes">
+
+<div id="keys" hidden></div>
+  <button id="gear" hidden title="rustyAC settings (O)" aria-label="rustyAC settings"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M9.4 1l.3 1.8c.4.1.8.3 1.1.5l1.5-1 1.4 1.4-1 1.5c.2.3.4.7.5 1.1l1.8.3v2l-1.8.3c-.1.4-.3.8-.5 1.1l1 1.5-1.4 1.4-1.5-1c-.3.2-.7.4-1.1.5L9.4 15h-2l-.3-1.8c-.4-.1-.8-.3-1.1-.5l-1.5 1-1.4-1.4 1-1.5c-.2-.3-.4-.7-.5-1.1L1.8 9.4v-2l1.8-.3c.1-.4.3-.8.5-1.1l-1-1.5 1.4-1.4 1.5 1c.3-.2.7-.4 1.1-.5L7.4 1h2zM8.4 5.6a2.8 2.8 0 100 5.6 2.8 2.8 0 000-5.6z"/></svg></button>
+
+<div id="controls" hidden>
+  <div class="controls-head">
+    <h2>rustyAC</h2>
+    <button id="controls-close">Close (Esc)</button>
+  </div>
+  <p><button id="fullscreen" title="Full screen: there the game has every key, Esc held leaves it">Full screen</button></p>
+  <p id="controls-origin" class="status"></p>
+  <p>
+    <label>Sound volume <input id="sound-volume" type="range" min="0" max="100" step="1" value="100" aria-label="Sound volume"></label>
+    <label><input id="sound-mute" type="checkbox"> Mute</label>
+    <span id="sound-line" class="status"></span>
+  </p>
+  <p class="hint">Left out of the browser's sound: AC's two DSP plug-ins and the track's walls that muffle sound (occluders).</p>
+  <p>
+    <button id="controls-load">Load my controls.ini</button>
+    <input id="controls-file" type="file" accept=".ini,text/plain" hidden>
+    <button id="controls-reset">Reset to AC's defaults</button>
+  </p>
+  <p class="hint">
+    Your own file is <code>Documents\Assetto Corsa\cfg\controls.ini</code>. It is read on this
+    computer by the parser the desktop build uses: its steering numbers, its keys and its pad
+    buttons all count. Nothing is uploaded; the settings are kept in this browser. A change
+    works at once, also while you drive. The defaults are the built-in layout: AC's default
+    keys, and the pad numbers this page has always used.
+  </p>
+  <h2>Keys in a drive</h2>
+  <table class="small">
+    <tr><td>the driving views in turn, the car's own cameras</td><td>F1 or C, F6</td></tr>
+    <tr><td>AC's virtual mirror (Full mode, video.ini with mirrors)</td><td>F11</td></tr>
+    <tr><td>AC's ESC menu (Full mode; Debug: the page's menu)</td><td>Esc</td></tr>
+    <tr><td>table, console, apps (Full mode)</td><td>Tab, Home, Ctrl + your controls.ini keys</td></tr>
+    <tr><td>back to your car, AC's free camera (Full mode; the free camera only when the game's
+      <code>system/cfg/assetto_corsa.ini</code> allows it: arrows move it, the right mouse button turns it)</td><td>F4, F7</td></tr>
+    <tr><td>skip, restart the session (F7 skips when there is no free camera)</td><td>F7, F8</td></tr>
+  </table>
+  <p class="hint">
+    While you drive every key is the game's: the browser's own (Alt+Left, Backspace, F5, F3,
+    Ctrl+R, Ctrl+F, Ctrl+P, Ctrl+S, the mouse's back and forward buttons) do nothing, and leaving
+    the page asks first. F12 stays the browser's. The browser keeps a few keys whatever a page
+    does (Ctrl+W, Ctrl+T, Ctrl+N): press <b>Full screen</b> at the top of this tab and
+    those are the game's too while you drive: Esc opens AC's ESC menu there as well, and holding
+    Esc leaves full screen.
+  </p>
+  <p><label>Picture <select id="backend">
+    <option value="full" selected>Full: AC's own renderer (needs WebGPU; else Debug)</option>
+    <option value="auto">Debug: WebGPU, else WebGL2</option>
+    <option value="webgl">Debug: WebGL2</option>
+  </select></label></p>
+  <h2>Graphics</h2>
+  <p><label>Preset <select id="gfx-preset">
+    <option value="high">High</option>
+    <option value="medium">Medium</option>
+    <option value="low">Low</option>
+    <option value="custom">Custom</option>
+  </select></label></p>
+  <div id="gfx-list"></div>
+  <p id="gfx-note" class="hint"></p>
+  <p class="hint">A preset writes its settings into the page's own
+    <code>Documents\Assetto Corsa\cfg\video.ini</code>; Settings' Video tab shows and changes
+    the same file key by key (a preset that no longer matches it reads Custom). Full mode reads
+    it as rustyac.exe does, when a drive starts: a change counts from the next drive. Render
+    scale is rustyAC's own and counts at once. What the Video tab marks "(desktop only)", YEBIS
+    post-processing, is kept in the file for rustyac.exe, which draws it; this page does not.</p>
+  <h2 id="controls-section">Controls</h2>
+  <p id="controls-error" class="refusal" hidden></p>
+  <div id="controls-list"></div>
+  <table id="controls-layout"></table>
+  <p id="controls-not-used" class="hint"></p>
+  <h2>Downloaded data</h2>
+  <p id="storage-total" class="status"></p>
+  <table id="storage-list"></table>
+  <p>
+    <button id="storage-clear-selected">Clear selected</button>
+    <button id="storage-clear-all">Clear all</button>
+  </p>
+  <p class="hint">What is cleared is downloaded again when a drive needs it. "Clear all" leaves
+    your own launcher settings (the last row) alone: tick that row to clear them.</p>
+  <h2>Diagnostics</h2>
+  <p>
+    <button id="copy-diagnostics">Copy diagnostics</button>
+    <span id="diagnostics-copied" class="status"></span>
+  </p>
+  <p class="hint">The page's own log of the last few visits (connections, joins, downloads,
+    errors), for a bug report. Nothing is sent anywhere.</p>
+</div>
+
+<main id="menu">
+  <h1>rustyAC <small>browser preview</small></h1>
+  <p class="lead">
+    Assetto Corsa's physics, rewritten in Rust and compiled to WebAssembly: the same numbers,
+    bit for bit, as the desktop build. A small picture, keyboard and gamepad. No sound, and not
+    AC's own look: this is a preview.
+  </p>
+
+  <section id="content">
+    <h2>1. Content</h2>
+    <p id="pack-line" hidden></p>
+    <p class="folder-only">
+      <button id="open-folder">Open your Assetto Corsa folder</button>
+      <button id="reopen-folder" hidden></button>
+      <button id="open-folder-list" hidden>Open it as a file list</button>
+      <input id="folder-input" type="file" webkitdirectory hidden>
+    </p>
+    <p id="folder-list-hint" class="hint folder-only" hidden>
+      Chrome refuses folders under Program Files: use this instead. The browser asks whether to
+      "upload" the folder's files: nothing is uploaded, the page reads them on this computer.
+      It has to be picked again on every visit.
+    </p>
+    <p class="hint folder-only">
+      The folder is the one with <code>content</code> and <code>system</code> in it
+      (<code>...\steamapps\common\assettocorsa</code>). Its files are read on this computer by
+      this page only; nothing is uploaded and nothing is changed.
+    </p>
+    <p id="content-line" class="status"></p>
+    <p id="refusal" class="refusal" hidden></p>
+    <div id="progress" hidden><div id="progress-bar"></div></div>
+    <p id="status" class="status"></p>
+    <pre id="notes" hidden></pre>
+  </section>
+
+  <section class="old">
+    <h2>2. Car and track</h2>
+    <div class="row">
+      <label>Car <input id="car-search" type="search" placeholder="search" autocomplete="off" hidden><select id="car" disabled></select></label>
+      <label>Track <input id="track-search" type="search" placeholder="search" autocomplete="off" hidden><select id="track" disabled></select></label>
+    </div>
+    <div class="row">
+      <label>Start <select id="spawn">
+        <option value="pit">in the pits</option>
+        <option value="hotlap">hot-lap start</option>
+        <option value="start">on the grid</option>
+      </select></label>
+      <label><input id="auto-shifter" type="checkbox" checked> automatic gearbox</label>
+    </div>
+    <details id="refused-list" hidden><summary></summary><ul></ul></details>
+  </section>
+
+  <section class="old">
+    <h2>3. Drive</h2>
+    <p><button id="drive" disabled>Drive</button></p>
+  </section>
+
+  <section class="old">
+    <h2>Controls</h2>
+    <p>
+      <button id="controls-open">Steering and controls ...</button>
+      <span id="controls-line" class="status"></span>
+    </p>
+    <p class="hint">
+      Speed sensitivity, gamma, filter, dead zone and rumble of the pad, the keyboard's steering
+      speeds, or your own <code>controls.ini</code> as a whole. While driving: the O key.
+    </p>
+  </section>
+
+  <section id="multiplayer" class="old">
+    <h2>Multiplayer</h2>
+    <p class="hint">
+      Race on a real Assetto Corsa server (Kunos' own <code>acServer</code>) against other
+      browsers, desktop rustyAC and Assetto Corsa itself. The server decides the track and
+      gives you one of its cars, so that track and every car on the server have to be in the
+      content above. Your name and a random player id are kept in this browser.
+    </p>
+    <div class="row">
+      <label>Server <select id="mp-server" disabled></select></label>
+      <label>Car <select id="mp-car"><option value="">any free car</option></select></label>
+      <label>Your name <input id="mp-name" maxlength="32" value="rustyAC driver"></label>
+      <label>Password <input id="mp-password" type="password" placeholder="none" autocomplete="off"></label>
+    </div>
+    <p><button id="mp-join" disabled>Join</button></p>
+    <p id="mp-status" class="status"></p>
+  </section>
+
+  <section class="small old">
+    <h2>Keys</h2>
+    <table>
+      <tr><td>throttle, brake</td><td>Up / W, Down / S</td><td>RT, LT</td></tr>
+      <tr><td>steer</td><td>Left / A, Right / D</td><td>left stick</td></tr>
+      <tr><td>gear up, down</td><td>Space / E, Left Ctrl / Q</td><td>Y, X</td></tr>
+      <tr><td>clutch, handbrake</td><td>Left Shift, B (F9)</td><td>A, RB</td></tr>
+      <tr><td>DRS, KERS / ERS</td><td>F, K</td><td>LB, B</td></tr>
+      <tr><td>traction control up, down</td><td>T, Shift+T</td><td>D-pad up, down</td></tr>
+      <tr><td>ABS up, down</td><td>Y, Shift+Y</td><td>Back held + D-pad up, down</td></tr>
+      <tr><td>brake bias forward, rearward</td><td>], [</td><td>D-pad right, left</td></tr>
+      <tr><td>back to the pits</td><td>R</td><td>Back, a tap</td></tr>
+      <tr><td>back onto the track</td><td>Shift+R</td><td>Back, held 0.6 s and let go</td></tr>
+      <tr><td>next view, the car's own cameras</td><td>F1 or C, F6</td><td>right stick press</td></tr>
+      <tr><td>virtual mirror (Full mode)</td><td>F11</td><td></td></tr>
+      <tr><td>new car, automatic gearbox</td><td>N, G</td><td></td></tr>
+      <tr><td>pause, menu</td><td>P, Esc</td><td>Start</td></tr>
+      <tr><td>steering and controls</td><td>O</td><td></td></tr>
+      <tr><td>on a server: chat, leave</td><td>Enter, Esc</td><td></td></tr>
+    </table>
+    <p class="hint">
+      The display shows the levels all the time (<code>TC 2/3</code>, <code>ABS off</code>,
+      <code>Bias 58.0 %</code>); a level goes up to its highest and then to off. Back does its
+      own job when you let it go, and none at all if you used the D-pad while holding it.
+      Left Shift is also the clutch: use Right Shift for Shift+T and Shift+Y while moving.
+    </p>
+    <p class="hint">
+      These are the built-in layout's keys: Assetto Corsa's default keys plus WASD. AC keeps
+      your own bindings in <code>Documents\Assetto Corsa\cfg\controls.ini</code>, which is not
+      inside the game's folder: load it under <b>Controls</b> above and its keys and pad buttons
+      take the place of this table's driving rows (the Controls panel then lists them).
+    </p>
+  </section>
+
+  <footer>
+    <p id="version"></p>
+    <p>
+      rustyAC is free software (GPL-3.0-or-later):
+      <a href="https://github.com/thesupersupersigma/rustyAC">source</a>,
+      <a href="LICENSING.md">licences</a>. Assetto Corsa and its content belong to Kunos
+      Simulazioni; this page ships none of it.
+    </p>
+    <p>Audio engine: FMOD Studio by Firelight Technologies Pty Ltd.</p>
+  </footer>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,568 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Test oracle for `rustyac-audio`.
+//!
+//! audio_oracle run --side ac|port --tape <file.audiotape> [--camera cockpit|chase|trackside]
+//!                  [--out <dir>] [--frames <n>] [--no-track]
+//!     One side of a drive, in this process: the game's own sound code (`ac`, acs.exe mapped
+//!     and called by address) or the Rust port. Writes `<drive>_<camera>_<side>.log` (every
+//!     FMOD call) and `.wav` (FMOD's non-real-time writer; nothing reaches the speakers).
+//! audio_oracle compare --tape <file> [--camera ...] [--frames <n>] [--out <dir>]
+//!     Runs the game's side twice and the port once (three processes) and compares the logs
+//!     line by line and the WAVs byte by byte.
+//! audio_oracle golden --tape <file> --camera <c> --frames <n> --out-file <file.augold>
+//!     Writes the golden file of `crates/rustyac-audio/tests/golden.rs` from the game's own run.
+//! audio_oracle dsp [--count <n>] [--seed <n>]
+//!     The two DSP plug-ins: the game's own callbacks against the port's on random buffers.
+//! audio_oracle survey [--out <file.md>]
+//!     Every installed car and track: is there a bank, does FMOD 1.08.12 load it, which
+//!     events does the sound find.
+//!
+//! common: [--acs <path to acs.exe>] [--root <scratch game folder>]
+
+#[allow(dead_code)]
+#[path = "../../car_oracle/src/acs.rs"]
+mod acs;
+mod crash;
+mod crew;
+mod drive;
+mod dsp_check;
+mod harness;
+mod survey;
+
+use std::path::{Path, PathBuf};
+
+use drive::{Camera, Drive, BLOCK, DT, SAMPLE_RATE};
+use rustyac_audio::car::CarInfo;
+use rustyac_audio::engine::EngineFiles;
+use rustyac_audio::fmod::{log, raw};
+use rustyac_audio::golden::{run_session, Golden, GoldenFrame, Session, SessionFrame};
+use rustyac_audio::sim::PhysicsEvent;
+use rustyac_audio::track::Scene;
+
+const DEFAULT_ACS: &str = r"C:\Program Files (x86)\Steam\steamapps\common\assettocorsa\acs.exe";
+
+pub fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent).expect("the repository folder").to_path_buf()
+}
+
+pub struct Args {
+    command: String,
+    side: String,
+    tape: Option<PathBuf>,
+    /// `--tapes <prefix>`: several cars (`<prefix>.car<n>.audiotape` of `car_oracle multi
+    /// --audio-tape`), `--max-cars <n>` the first n of them, `--focus 0,2@120`: the focused car
+    /// (the camera's) over the frames
+    tapes: Option<PathBuf>,
+    max_cars: usize,
+    focus: Vec<(u32, usize)>,
+    focus_text: String,
+    /// `--in-pit <car>`: that car stands in its pit box
+    in_pit: Option<usize>,
+    camera: Camera,
+    out: PathBuf,
+    frames: Option<usize>,
+    no_track: bool,
+    pub acs: PathBuf,
+    root: PathBuf,
+    pub count: usize,
+    pub seed: u64,
+    pub out_file: Option<PathBuf>,
+    pub only: Option<String>,
+    /// `run --script <log>`: the port is told what that run was told about its events' states.
+    script: Option<PathBuf>,
+    /// `--crew <frame>:<seconds>`: the pit crew's wheel guns (see `crew.rs`)
+    crew: Option<crew::CrewSpec>,
+    crew_text: String,
+    /// `--audio-ini <file>`: the levels both sides read instead of the oracle's own (an
+    /// audio.ini the Audio app wrote); `--master-at <frame>:<level>`: the Audio app's Master
+    /// spinner at the start of that frame (`AudioEngine::setVolume`)
+    audio_ini: Option<PathBuf>,
+    master_at: Option<(usize, f32)>,
+    master_at_text: String,
+}
+
+fn parse() -> Result<Args, String> {
+    let mut it = std::env::args().skip(1);
+    let command = it.next().ok_or("usage: audio_oracle run|compare|dsp|survey ... (see the top of src/main.rs)")?;
+    let repo = repo_root();
+    let mut a = Args {
+        command,
+        side: "port".to_string(),
+        tape: None,
+        tapes: None,
+        max_cars: usize::MAX,
+        focus: Vec::new(),
+        focus_text: String::new(),
+        in_pit: None,
+        camera: Camera::Cockpit,
+        out: repo.join("oracle/audio"),
+        frames: None,
+        no_track: false,
+        acs: PathBuf::from(DEFAULT_ACS),
+        root: repo.join("re/scratch/audio_oracle/root"),
+        count: 200,
+        seed: 1,
+        out_file: None,
+        only: None,
+        script: None,
+        crew: None,
+        crew_text: String::new(),
+        audio_ini: None,
+        master_at: None,
+        master_at_text: String::new(),
+    };
+    while let Some(arg) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{arg} needs a value"));
+        match arg.as_str() {
+            "--side" => a.side = value()?,
+            "--tape" => a.tape = Some(PathBuf::from(value()?)),
+            "--tapes" => a.tapes = Some(std::path::absolute(PathBuf::from(value()?)).map_err(|e| e.to_string())?),
+            "--in-pit" => a.in_pit = Some(value()?.parse().map_err(|_| "--in-pit needs a car number")?),
+            "--max-cars" => a.max_cars = value()?.parse().map_err(|_| "--max-cars needs a number")?,
+            "--focus" => {
+                a.focus_text = value()?;
+                for item in a.focus_text.split(',').filter(|s| !s.is_empty()) {
+                    let (car, from) = item.split_once('@').unwrap_or((item, "0"));
+                    a.focus.push((car.parse().map_err(|_| "--focus <car>[@<frame>],…")?, from.parse().map_err(|_| "--focus <car>[@<frame>],…")?));
+                }
+            }
+            "--camera" => a.camera = Camera::parse(&value()?)?,
+            "--audio-ini" => a.audio_ini = Some(std::path::absolute(PathBuf::from(value()?)).map_err(|e| e.to_string())?),
+            "--master-at" => {
+                a.master_at_text = value()?;
+                let (frame, level) = a.master_at_text.split_once(':').ok_or("--master-at <frame>:<level>")?;
+                a.master_at = Some((frame.parse().map_err(|_| "--master-at <frame>:<level>")?, level.parse().map_err(|_| "--master-at <frame>:<level>")?));
+            }
+            "--out" => a.out = PathBuf::from(value()?),
+            "--frames" => a.frames = Some(value()?.parse().map_err(|_| "--frames needs a number")?),
+            "--no-track" => a.no_track = true,
+            "--acs" => a.acs = PathBuf::from(value()?),
+            "--root" => a.root = PathBuf::from(value()?),
+            "--count" => a.count = value()?.parse().map_err(|_| "--count needs a number")?,
+            "--seed" => a.seed = value()?.parse().map_err(|_| "--seed needs a number")?,
+            "--out-file" => a.out_file = Some(PathBuf::from(value()?)),
+            "--only" => a.only = Some(value()?),
+            "--script" => a.script = Some(PathBuf::from(value()?)),
+            "--crew" => {
+                a.crew_text = value()?;
+                a.crew = Some(crew::CrewSpec::parse(&a.crew_text)?);
+            }
+            other => return Err(format!("unknown option {other}")),
+        }
+    }
+    Ok(a)
+}
+
+fn main() {
+    let result = parse().and_then(|args| match args.command.as_str() {
+        "run" => run(&args),
+        "compare" => compare(&args),
+        "golden" => golden(&args),
+        "dsp" => dsp_check::run(&args),
+        "survey" => survey::run(&args),
+        other => Err(format!("unknown command {other}")),
+    });
+    if let Err(message) = result {
+        eprintln!("audio_oracle: {message}");
+        std::process::exit(1);
+    }
+}
+
+pub fn ac_folder(args: &Args) -> PathBuf {
+    args.acs.parent().unwrap_or(Path::new(".")).to_path_buf()
+}
+
+fn file_stem(drive: &Drive, side: &str) -> String {
+    if drive.label.is_empty() {
+        format!("{}_{}_{}_{side}", drive.car, drive.name, drive.camera.name())
+    } else {
+        format!("{}_{}_{}_{}_{side}", drive.car, drive.name, drive.label, drive.camera.name())
+    }
+}
+
+/// The drive the command line names: one car's tape, or the tapes of a field.
+fn load_drive(args: &Args) -> Result<Drive, String> {
+    let mut drive = load_drive_of(args)?;
+    drive.crew = args.crew;
+    if args.crew.is_some() {
+        drive.label = format!("{}crew", drive.label);
+    }
+    Ok(drive)
+}
+
+fn load_drive_of(args: &Args) -> Result<Drive, String> {
+    match (&args.tapes, &args.tape) {
+        (Some(prefix), _) => {
+            let mut drive = Drive::load_field(prefix, args.camera, args.frames, args.max_cars, &args.focus, args.in_pit)?;
+            // (a track given by its name: its folder in the game)
+            if let Some(track) = drive.track_folder.clone().filter(|t| !t.is_dir()) {
+                drive.track_folder = Some(ac_folder(args).join("content/tracks").join(track));
+            }
+            Ok(drive)
+        }
+        (None, Some(tape)) => Drive::load(&std::path::absolute(tape).map_err(|e| e.to_string())?, args.camera, args.frames),
+        (None, None) => Err("a drive is --tape <file.audiotape> or --tapes <prefix>".to_string()),
+    }
+}
+
+/// One side of a drive.
+fn run(args: &Args) -> Result<(), String> {
+    let mut drive = load_drive(args)?;
+    if args.no_track {
+        drive.track_folder = None;
+    }
+    let out = std::path::absolute(&args.out).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    let ac = ac_folder(args);
+    let repo = repo_root();
+    let root = std::path::absolute(&args.root).map_err(|e| e.to_string())?;
+    drive::prepare_root(&root, &repo, &ac, &drive)?;
+    if let Some(file) = &args.audio_ini {
+        std::fs::copy(file, root.join("cfg/audio.ini")).map_err(|e| format!("{}: {e}", file.display()))?;
+    }
+    *harness::MASTER_AT.lock().unwrap() = args.master_at;
+    let stem = file_stem(&drive, if args.script.is_some() { "scripted" } else { &args.side });
+    let wav = out.join(format!("{stem}.wav"));
+    let log_file = out.join(format!("{stem}.log"));
+    let scene = match &drive.track_folder {
+        Some(folder) => Some(Scene::load(folder, &drive.layout)?),
+        None => None,
+    };
+    let surfaces = drive::surfaces(&ac, &drive)?;
+    let master = rustyac_physics::data::ini::IniReader::load(&root.join("cfg/audio.ini"))?.get_float("LEVELS", "MASTER")?;
+
+    match args.side.as_str() {
+        "ac" => {
+            // the game's code reads its files by relative path
+            std::env::set_current_dir(&root).map_err(|e| format!("{}: {e}", root.display()))?;
+            let imports: Vec<(&'static str, &'static str, usize)> = raw::imports()
+                .into_iter()
+                .map(|(symbol, function)| (if symbol.contains("@Studio@") { "fmodstudio64.dll" } else { "fmod64.dll" }, symbol, function))
+                .collect();
+            acs::set_extra_overrides(imports);
+            let acs = acs::Acs::load(&args.acs)?;
+            // a fault inside an FMOD DLL is named as such (this handler is asked before the
+            // loader's own, which names the game's functions)
+            crash::install_for_fmod_only();
+            acs.silence_game_stdout();
+            raw::load(&ac, raw::Output::WavNrt { file: wav.clone(), rate: SAMPLE_RATE, block: BLOCK })?;
+            log::start(Some(&log_file))?;
+            harness::run(&acs, &ac, &drive, scene.as_ref(), &drive::surface_cache_paths(&surfaces), master);
+        }
+        "port" => {
+            crash::install();
+            raw::load(&ac, raw::Output::WavNrt { file: wav.clone(), rate: SAMPLE_RATE, block: BLOCK })?;
+            match &args.script {
+                Some(script) => log::start_scripted(Some(&log_file), script)?,
+                None => log::start(Some(&log_file))?,
+            }
+            run_port(&ac, &root, &drive, scene.as_ref(), &surfaces, master)?;
+        }
+        other => return Err(format!("--side is ac or port, not {other}")),
+    }
+    let summary = log::finish().ok_or("no log")?;
+    println!("{stem} frames={} lines={} hash={:016x}", drive.frames.len(), summary.lines, summary.hash);
+    Ok(())
+}
+
+/// `--master-at`: the master level set at the start of a frame, as the Audio app does.
+struct MasterAt {
+    at: usize,
+    level: f32,
+}
+
+impl rustyac_audio::golden::SessionHooks for MasterAt {
+    fn setup(&mut self, _engine: &mut rustyac_audio::engine::AudioEngine) {}
+
+    fn frame(&mut self, engine: &mut rustyac_audio::engine::AudioEngine, index: usize) {
+        if index == self.at {
+            engine.set_volume(self.level);
+        }
+    }
+}
+
+/// The port's side: the same session through `rustyac_audio`.
+fn run_port(ac: &Path, root: &Path, drive: &Drive, scene: Option<&Scene>, surfaces: &[(String, String)], master: f32) -> Result<(), String> {
+    let files = EngineFiles { content_root: ac.to_path_buf(), audio_engine_ini: root.join("system/cfg/audio_engine.ini"), audio_ini: root.join("cfg/audio.ini") };
+    let track = match (scene, drive.track_data_relative()) {
+        (Some(scene), Some(relative)) => Some((scene, root.join(relative))),
+        _ => None,
+    };
+    let car = CarInfo { unix_name: drive.car.clone(), guid: 0, data_folder: root.join("content/cars").join(&drive.car).join("data"), car_cameras_external_sound: Vec::new() };
+    let session = Session { files, master, track, surfaces, car, camera: drive.camera.view(), dt: DT };
+    let events: Vec<Vec<PhysicsEvent>> = drive.frames.iter().map(|f| f.events.iter().map(|raw| PhysicsEvent::from_bytes(raw)).collect()).collect();
+    if drive.other_cars.is_empty() {
+        let frames = drive.frames.iter().zip(&events).map(|(frame, events)| SessionFrame { car: &frame.car, events, listener: frame.listener });
+        if let Some((at, level)) = *harness::MASTER_AT.lock().unwrap() {
+            if drive.crew.is_some() {
+                return Err("--master-at is for a drive without --crew".to_string());
+            }
+            return rustyac_audio::golden::run_session_with(session, frames, &mut MasterAt { at, level });
+        }
+        return match drive.crew {
+            Some(spec) => rustyac_audio::golden::run_session_with(session, frames, &mut crew::PortCrew::new(ac, spec, drive.frames.iter().map(|f| f.state.as_slice()).collect())),
+            None => run_session(session, frames),
+        };
+    }
+    let others: Vec<CarInfo> = drive.other_cars.iter().enumerate().map(|(i, name)| CarInfo { unix_name: name.clone(), guid: i as i32 + 1, data_folder: root.join("content/cars").join(name).join("data"), car_cameras_external_sound: Vec::new() }).collect();
+    let fields: Vec<Vec<rustyac_audio::car::CarFrame>> = drive.frames.iter().map(|f| std::iter::once(f.car.clone()).chain(f.others.iter().map(|o| o.1.clone())).collect()).collect();
+    rustyac_audio::golden::run_field(session, others, drive.frames.iter().zip(&events).zip(&fields).map(|((frame, events), cars)| rustyac_audio::golden::FieldFrame { cars, events, listener: frame.listener, focus: frame.focus }))
+}
+
+/// `audio_oracle golden --tape <file> --camera <c> --frames <n> --out-file <file.augold>`: the
+/// game's own sound code on the first frames of a drive; the drive's inputs, the answers its
+/// run got about its events' states, and its log's line count and hash go into a golden file
+/// for `cargo test -p rustyac-audio`.
+fn golden(args: &Args) -> Result<(), String> {
+    let tape = args.tape.as_ref().ok_or("golden needs --tape <file.audiotape>")?;
+    let path = args.out_file.as_ref().ok_or("golden needs --out-file <file.augold>")?;
+    let drive = Drive::load(tape, args.camera, args.frames)?;
+    let out = std::path::absolute(&args.out).map_err(|e| e.to_string())?.join("golden");
+    child(args, "ac", &out, None)?;
+    let log_file = out.join(format!("{}.log", file_stem(&drive, "ac")));
+    let bytes = std::fs::read(&log_file).map_err(|e| format!("{}: {e}", log_file.display()))?;
+    let (lines, hash) = log::summary_of(&bytes);
+    let answers = log::answers_of(&String::from_utf8_lossy(&bytes));
+    let golden = Golden {
+        car: drive.car.clone(),
+        track: drive.track_folder.as_ref().and_then(|f| f.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        layout: drive.layout.clone(),
+        camera: drive.camera,
+        frames: drive.frames.iter().map(|f| GoldenFrame { car: f.car.clone(), events: f.events.iter().map(|raw| PhysicsEvent::from_bytes(raw)).collect() }).collect(),
+        answers,
+        lines,
+        hash,
+    };
+    golden.write(path)?;
+    let _ = std::fs::remove_dir_all(&out);
+    println!("{}: {} frames, {} lines, hash {hash:016x}, {} answers, {} bytes", path.display(), golden.frames.len(), lines, golden.answers.len(), std::fs::metadata(path).map(|m| m.len()).unwrap_or(0));
+    Ok(())
+}
+
+/// Runs that were repeated because FMOD crashed.
+static FMOD_CRASHES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn child(args: &Args, side: &str, out: &Path, script: Option<&Path>) -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut command = std::process::Command::new(exe);
+    command.arg("run").arg("--side").arg(side);
+    match (&args.tapes, &args.tape) {
+        (Some(prefix), _) => {
+            command.arg("--tapes").arg(prefix).arg("--max-cars").arg(args.max_cars.to_string());
+            if !args.focus_text.is_empty() {
+                command.arg("--focus").arg(&args.focus_text);
+            }
+            if let Some(car) = args.in_pit {
+                command.arg("--in-pit").arg(car.to_string());
+            }
+        }
+        (None, Some(tape)) => {
+            command.arg("--tape").arg(tape);
+        }
+        (None, None) => return Err("a drive is --tape <file.audiotape> or --tapes <prefix>".to_string()),
+    }
+    command.arg("--camera").arg(args.camera.name()).arg("--out").arg(out).arg("--acs").arg(&args.acs);
+    command.arg("--root").arg(&args.root);
+    if let Some(frames) = args.frames {
+        command.arg("--frames").arg(frames.to_string());
+    }
+    if args.no_track {
+        command.arg("--no-track");
+    }
+    if args.crew.is_some() {
+        command.arg("--crew").arg(&args.crew_text);
+    }
+    if let Some(file) = &args.audio_ini {
+        command.arg("--audio-ini").arg(file);
+    }
+    if args.master_at.is_some() {
+        command.arg("--master-at").arg(&args.master_at_text);
+    }
+    if let Some(script) = script {
+        command.arg("--script").arg(script);
+    }
+    // FMOD 1.08.12 itself crashes now and then in this configuration (about one run in a
+    // hundred, inside fmod64.dll, with the game's own code as with the port): such a run is
+    // done again, and counted
+    for attempt in 0..4 {
+        let output = command.output().map_err(|e| e.to_string())?;
+        if output.status.success() {
+            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+        }
+        let text = String::from_utf8_lossy(&output.stderr).into_owned();
+        let in_fmod = text.contains("at fmod64.dll+") || text.contains("at fmodstudio64.dll+");
+        if attempt == 3 || !in_fmod {
+            return Err(format!("the {side} side failed ({}):\n{}", output.status, text.lines().take(12).collect::<Vec<_>>().join("\n")));
+        }
+        FMOD_CRASHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    unreachable!()
+}
+
+/// First line where two logs differ, with some lines around it.
+fn first_difference(a: &str, b: &str) -> Option<String> {
+    let (la, lb): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
+    let n = la.len().min(lb.len());
+    let at = (0..n).find(|&i| la[i] != lb[i]).or((la.len() != lb.len()).then_some(n))?;
+    let mark = (0..at.min(la.len())).rev().find(|&i| la[i].starts_with('#')).map(|i| la[i]).unwrap_or("");
+    let mut text = format!("line {} (after \"{mark}\"; {} against {} lines)\n", at + 1, la.len(), lb.len());
+    for i in at.saturating_sub(3)..(at + 3).min(la.len().max(lb.len())) {
+        let (x, y) = (la.get(i).copied().unwrap_or("<end>"), lb.get(i).copied().unwrap_or("<end>"));
+        if x == y {
+            text.push_str(&format!("      {x}\n"));
+        } else {
+            text.push_str(&format!("  ac: {x}\nport: {y}\n"));
+        }
+    }
+    Some(text)
+}
+
+/// The 16-bit samples of a WAV file.
+fn samples(wav: &[u8]) -> Vec<i16> {
+    let start = wav.windows(4).position(|w| w == b"data").map(|at| at + 8).unwrap_or(wav.len());
+    wav[start..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect()
+}
+
+/// How far two mixes are apart, by their levels over windows of a second (only where one of
+/// them is above -60 dB): the root mean square of the windows' level differences and the
+/// largest one, dB. Two runs of the same calls differ sample by sample (FMOD picks samples and
+/// start offsets with random numbers), so the levels are what can be compared.
+fn apart(a: &[i16], b: &[i16]) -> (f64, f64) {
+    let window = (drive::SAMPLE_RATE as usize) * 2;
+    let level = |x: &[i16]| -> f64 {
+        let sum: f64 = x.iter().map(|s| (*s as f64) * (*s as f64)).sum();
+        10.0 * (sum / x.len().max(1) as f64 / (32768.0 * 32768.0)).max(1e-12).log10()
+    };
+    let n = a.len().min(b.len());
+    let (mut worst, mut squares, mut count) = (0.0f64, 0.0f64, 0u32);
+    for start in (0..n).step_by(window) {
+        let end = (start + window).min(n);
+        let (la, lb) = (level(&a[start..end]), level(&b[start..end]));
+        if la.max(lb) > -60.0 {
+            worst = worst.max((la - lb).abs());
+            squares += (la - lb) * (la - lb);
+            count += 1;
+        }
+    }
+    ((squares / count.max(1) as f64).sqrt(), worst)
+}
+
+/// How many whole mixer blocks of silence a mix starts with. FMOD's clock-less WAV writer mixes
+/// a block whenever one of its calls waits for the loader thread, so the number of blocks it
+/// has written before the first frame of the drive differs from run to run (7 to 55 here, also
+/// between two runs of the game's own code); from the first audible block on every run of a
+/// drive is equally long (Task 22b).
+fn pre_roll(samples: &[i16]) -> usize {
+    let block = drive::BLOCK as usize * 2;
+    samples.chunks(block).take_while(|b| b.iter().all(|s| *s == 0)).count()
+}
+
+/// Both sides of a drive, compared.
+fn compare(args: &Args) -> Result<(), String> {
+    let mut drive = load_drive(args)?;
+    if args.no_track {
+        drive.track_folder = None;
+    }
+    let out = std::path::absolute(&args.out).map_err(|e| e.to_string())?;
+    let out2 = out.join("second");
+    // the game's side twice (is FMOD the same from run to run?), then the port twice: left to
+    // itself, and told what the game's first run was told about its events' states
+    child(args, "ac", &out, None)?;
+    child(args, "ac", &out2, None)?;
+    child(args, "port", &out, None)?;
+    let ac_log_file = out.join(format!("{}.log", file_stem(&drive, "ac")));
+    child(args, "port", &out, Some(&ac_log_file))?;
+    let read = |dir: &Path, side: &str, ext: &str| std::fs::read(dir.join(format!("{}.{ext}", file_stem(&drive, side)))).map_err(|e| e.to_string());
+    let ac_log = String::from_utf8_lossy(&read(&out, "ac", "log")?).into_owned();
+    let ac_log2 = String::from_utf8_lossy(&read(&out2, "ac", "log")?).into_owned();
+    let port_log = String::from_utf8_lossy(&read(&out, "port", "log")?).into_owned();
+    let scripted_log = String::from_utf8_lossy(&read(&out, "scripted", "log")?).into_owned();
+    let ac_wav = read(&out, "ac", "wav")?;
+    let ac_wav2 = read(&out2, "ac", "wav")?;
+    let port_wav = read(&out, "port", "wav")?;
+    let calls = ac_log.lines().filter(|l| !l.starts_with('#')).count();
+    let log_same = ac_log == scripted_log;
+    let free_same = ac_log == port_log;
+    let log_repeat = ac_log == ac_log2;
+    let wav_repeat = ac_wav == ac_wav2;
+    let wav_same = ac_wav == port_wav;
+    let (sa, sa2, sp) = (samples(&ac_wav), samples(&ac_wav2), samples(&port_wav));
+    // the mixes from their first audible block on: what the drive itself made FMOD write
+    let block = drive::BLOCK as usize * 2;
+    let rolls = [pre_roll(&sa), pre_roll(&sa2), pre_roll(&sp)];
+    let written = [sa.len() / block, sa2.len() / block, sp.len() / block];
+    let (sa, sa2, sp) = (&sa[(rolls[0] * block).min(sa.len())..], &sa2[(rolls[1] * block).min(sa2.len())..], &sp[(rolls[2] * block).min(sp.len())..]);
+    let describe = |same: bool, a: &[i16], b: &[i16]| {
+        if same {
+            "identical".to_string()
+        } else {
+            let (rms, worst) = apart(a, b);
+            format!("{rms:.2} dB rms, {worst:.2} dB at most")
+        }
+    };
+    // the port's mix is as far from the game's as the game's own second run is (within twice
+    // that, or half a dB), and as long: to the block, counted from the first audible one (the
+    // silent blocks before it are FMOD's start-up, see `pre_roll`)
+    // (all three: if the game's own two runs differed, the rule could not be applied; and a
+    // mix without any sound is no proof of anything)
+    let length_ok = sa.len() == sp.len() && sa.len() == sa2.len() && !sa.is_empty();
+    let wav_ok = wav_same || (!wav_repeat && length_ok && apart(sa, sp).0 <= (apart(sa, sa2).0 * 2.0).max(0.5));
+    let word = |same: bool| if same { "identical" } else { "differs" };
+    println!(
+        "{} | {} | {} | {} | {} | {} | {} | {} | {} | {:.1} s | {} | {} | {}",
+        if drive.other_cars.is_empty() { drive.car.clone() } else { format!("{} ({})", drive.cars().join(", "), drive.label) },
+        drive.track_folder.as_ref().and_then(|f| f.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "-".to_string()),
+        drive.name,
+        drive.camera.name(),
+        drive.frames.len(),
+        calls,
+        if log_same { "identical" } else { "DIFFERENT" },
+        word(log_repeat),
+        word(free_same),
+        sa.len() as f64 / 2.0 / drive::SAMPLE_RATE as f64,
+        describe(wav_repeat, sa, sa2),
+        describe(wav_same, sa, sp),
+        match (log_same && wav_ok, FMOD_CRASHES.load(std::sync::atomic::Ordering::Relaxed)) {
+            (true, 0) => "ok".to_string(),
+            (true, n) => format!("ok ({n} run(s) repeated: FMOD crashed)"),
+            (false, _) => "FAIL".to_string(),
+        },
+    );
+    if !log_same {
+        if let Some(text) = first_difference(&ac_log, &scripted_log) {
+            println!("{text}");
+        }
+    } else if !wav_ok {
+        println!("the WAVs: {} / {} / {} bytes (game, game again, port); levels {:?} against {:?}", ac_wav.len(), ac_wav2.len(), port_wav.len(), apart(sa, sa2), apart(sa, sp));
+    }
+    // (a line of its own: the rows keep their columns)
+    println!(
+        "  blocks: {} / {} / {} written (game, game again, port), of them {} / {} / {} silent start-up blocks; from the first audible block: {} / {} / {}{}",
+        written[0],
+        written[1],
+        written[2],
+        rolls[0],
+        rolls[1],
+        rolls[2],
+        sa.len() / block,
+        sa2.len() / block,
+        sp.len() / block,
+        if length_ok { "" } else { "  <-- NOT EQUAL (or silent)" },
+    );
+    // the recordings and logs are big: only a failing drive keeps its files
+    if log_same && wav_ok && std::env::var_os("AUDIO_ORACLE_KEEP").is_none() {
+        for side in ["ac", "port", "scripted"] {
+            for ext in ["log", "wav"] {
+                let _ = std::fs::remove_file(out.join(format!("{}.{ext}", file_stem(&drive, side))));
+            }
+        }
+    }
+    // the second run's files are only for the comparison
+    let _ = std::fs::remove_dir_all(&out2);
+    if log_same && wav_ok {
+        Ok(())
+    } else {
+        Err("the game and the port do not agree".to_string())
+    }
+}

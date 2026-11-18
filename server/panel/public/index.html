@@ -1,0 +1,91 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<!-- rustyAC's server panel: the on-demand servers and their presets (served by src/main.ts) -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rustyAC servers</title>
+<link rel="icon" href="/favicon.svg">
+<style>
+  :root { --bg: #f4f4f2; --card: #fff; --ink: #1d1d1b; --mute: #6b6b66; --line: #ddd; --accent: #c0392b; --ok: #1e7d3a; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --card: #22221f; --ink: #eee; --mute: #9a9a93; --line: #3a3a36; } }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 12px; } h2 { font-size: 16px; margin: 20px 0 8px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+  .mute { color: var(--mute); } .ok { color: var(--ok); } .bad { color: var(--accent); }
+  button { font: inherit; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+  button.go { background: var(--ok); color: #fff; border-color: var(--ok); } button.stop { background: var(--accent); color: #fff; border-color: var(--accent); }
+  code, pre { font: 12px ui-monospace, monospace; } pre { background: var(--bg); padding: 8px; overflow-x: auto; max-height: 220px; margin: 6px 0 0; }
+  label { display: inline-flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--mute); }
+  input, select, textarea { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; }
+  input[type=number] { width: 70px; } textarea { width: 100%; box-sizing: border-box; min-height: 90px; }
+  fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 8px 0; } legend { color: var(--mute); }
+  #error { position: sticky; top: 0; }
+  label small, small.help { font-size: 11px; color: var(--mute); max-width: 260px; } small.help { display: block; max-width: none; margin: 4px 0; }
+  .car { border-top: 1px solid var(--line); padding: 4px 0; } .skins { padding: 4px 0 2px 78px; gap: 4px 12px; }
+  label.tick { flex-direction: row; align-items: center; gap: 4px; color: var(--ink); } #cars { max-height: 480px; overflow-y: auto; }
+  details { margin: 8px 0; } summary { cursor: pointer; color: var(--mute); }
+</style>
+</head>
+<body>
+<main>
+  <h1>rustyAC on-demand servers</h1>
+  <div id="error" class="card bad" hidden></div>
+  <h2>Running</h2>
+  <div id="running"></div>
+  <h2>Presets</h2>
+  <div id="presets"></div>
+  <div class="row"><button id="new">New preset</button><span id="copies"></span></div>
+  <form id="editor" class="card" hidden>
+    <div class="row">
+      <label>name<input name="presetName" required size="32" maxlength="120"><small>The server's name in the players' list of servers.</small></label>
+      <label>track<select name="track"></select><small>Track and layout; its pit boxes are the most cars it can hold.</small></label>
+      <label>time of day<input name="time" type="time" min="08:00" max="18:00"><small>The time at the start, 08:00 to 18:00.</small></label>
+      <label>password<input name="password" maxlength="32"><small>Players type it to join. Empty: no password.</small></label>
+      <label>max players<input name="maxPlayers" type="number" min="1" max="64"><small>How many people can be on at once (at most the number of cars).</small></label>
+      <label>pickup mode<select name="pickup"><option value="1">on</option><option value="0">off (booking)</option></select><small>On: players pick any free car when they join. Off (booking): only the drivers in the entry list can join.</small></label>
+      <label>idle minutes<input name="idleMinutes" type="number" min="1" max="1440"><small>The server stops itself after this many minutes with nobody on it.</small></label>
+    </div>
+    <fieldset><legend>cars</legend>
+      <div class="row"><input id="carSearch" type="search" placeholder="search cars" size="30"><span id="carTotal" class="mute"></span><span id="carFill" class="bad"></span></div>
+      <small class="help">How many of each car the server has. Skins: the cars take the ticked skins in turn; random gives each car a random one of them; none ticked: acServer's default skin for every car.</small>
+      <div id="cars"></div>
+    </fieldset>
+    <fieldset><legend>sessions</legend><div class="row">
+      <label>practice minutes<input name="practice" type="number" min="0"><small>0: no practice.</small></label>
+      <label>qualify minutes<input name="qualify" type="number" min="0"><small>0: no qualifying.</small></label>
+      <label>race laps<input name="raceLaps" type="number" min="0"><small>0: a race by time (next), or no race.</small></label>
+      <label>or race minutes<input name="raceMinutes" type="number" min="0"><small>Used when laps is 0; both 0: no race.</small></label>
+      <label>race wait seconds<input name="raceWait" type="number" min="0"><small>Time on the grid before the start.</small></label>
+      <label>join during the race<select name="raceOpen"><option value="0">no</option><option value="1">yes</option><option value="2">first 20 s</option></select><small>Whether players can still join once the race runs.</small></label>
+    </div>
+    <p id="raceOnly" class="mute" hidden>Race only: players who join while the race runs start from the pits, and when it ends everyone waits in the pits until the next race. Add a practice session for open driving.</p>
+    </fieldset>
+    <fieldset><legend>weather and grip</legend><div class="row">
+      <label>weather<select name="graphics"></select><small>The sky and clouds.</small></label>
+      <label>air °C<input name="ambient" type="number"><small>Air temperature.</small></label>
+      <label>road +°C<input name="road" type="number"><small>How much warmer the road is than the air.</small></label>
+      <label>air variation °C<input name="variationAmbient" type="number"><small>The air temperature changes by up to this each session.</small></label>
+      <label>road variation °C<input name="variationRoad" type="number"><small>The same for the road.</small></label>
+      <label>wind min km/h<input name="windMin" type="number"><small>The slowest wind.</small></label>
+      <label>wind max km/h<input name="windMax" type="number"><small>The fastest wind.</small></label>
+      <label>wind direction °<input name="windDirection" type="number"><small>Where it blows from, 0 to 359.</small></label>
+      <label>direction variation °<input name="windVariation" type="number"><small>The direction changes by up to this.</small></label>
+      <label>grip at start %<input name="start" type="number"><small>100: a fully rubbered-in track.</small></label>
+      <label>grip randomness %<input name="randomness" type="number"><small>A random change of the start grip.</small></label>
+      <label>grip kept %<input name="transfer" type="number"><small>How much of the grip gained carries into the next session.</small></label>
+      <label>laps per 1% grip<input name="lapGain" type="number"><small>Laps (of all cars together) for 1% more grip.</small></label>
+    </div></fieldset>
+    <details><summary>advanced</summary>
+      <label>id<input name="presetId" required pattern="[a-z0-9][a-z0-9_\-]{0,31}"><small>The server's address, net/x/&lt;id&gt;. Made from the name; change it only when you must.</small></label>
+      <label style="display:flex">other server_cfg.ini keys<textarea name="rules"></textarea><small>KEY=value, one a line, as in acServer's own server_cfg.ini.</small></label>
+    </details>
+    <div class="row" style="margin-top:8px"><button class="go" type="submit">Save</button><button type="button" id="cancel">Cancel</button></div>
+  </form>
+</main>
+<script type="module" src="/panel.js"></script>
+</body>
+</html>

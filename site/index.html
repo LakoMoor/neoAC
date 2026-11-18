@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>neoAC — Assetto Corsa, native on Mac and Linux</title>
+<meta name="description" content="neoAC runs the Assetto Corsa 1.16 engine natively on macOS (Metal) and Linux (Vulkan), written in Rust. Built on rustyAC.">
+<meta property="og:title" content="neoAC — Assetto Corsa, native on Mac and Linux">
+<meta property="og:description" content="Rust, wgpu, Metal. A native Assetto Corsa build with its own launcher, sound mixer and lighting. Built on rustyAC.">
+<meta property="og:image" content="img/hero.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#07080b; --panel:#0f1117; --panel2:#151821; --line:#232734; --text:#e9ecf3; --mute:#9aa3b5;
+  --accent:#ff3b30; --accent2:#ff8a3d; --ok:#35d07f;
+  --radius:18px; --maxw:1180px;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){--bg:#f6f7fa;--panel:#fff;--panel2:#f0f2f7;--line:#e1e5ee;--text:#10131a;--mute:#566074}
+}
+:root[data-theme="light"]{--bg:#f6f7fa;--panel:#fff;--panel2:#f0f2f7;--line:#e1e5ee;--text:#10131a;--mute:#566074}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 20px}
+h1,h2,h3{font-family:"Space Grotesk",Inter,sans-serif;line-height:1.08;margin:0;letter-spacing:-.02em}
+.grad{background:linear-gradient(95deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* nav */
+nav{position:fixed;inset:0 0 auto 0;z-index:30;backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 70%,transparent);border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
+nav .wrap{display:flex;align-items:center;height:62px;gap:28px}
+.logo{font:700 22px "Space Grotesk";text-decoration:none;letter-spacing:-.03em}
+.logo b{color:var(--accent)}
+nav .links{display:flex;gap:22px;margin-left:auto;font-size:14.5px;color:var(--mute)}
+nav .links a{text-decoration:none}
+nav .links a:hover{color:var(--text)}
+.btn{display:inline-flex;align-items:center;gap:9px;padding:11px 18px;border-radius:12px;font-weight:600;font-size:14.5px;text-decoration:none;border:1px solid var(--line);background:var(--panel);transition:.2s}
+.btn:hover{transform:translateY(-1px);border-color:color-mix(in srgb,var(--accent) 60%,var(--line))}
+.btn.primary{background:linear-gradient(95deg,var(--accent),var(--accent2));border:0;color:#fff;box-shadow:0 10px 30px -10px color-mix(in srgb,var(--accent) 70%,transparent)}
+@media(max-width:760px){nav .links a:not(.btn){display:none}}
+
+/* hero */
+.hero{position:relative;min-height:min(100svh,880px);display:flex;align-items:flex-end;overflow:hidden;isolation:isolate}
+.hero img.bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 62%;z-index:-2;transform:scale(1.04);animation:drift 24s ease-in-out infinite alternate}
+@keyframes drift{to{transform:scale(1.12) translate(-1.2%,-1%)}}
+.hero::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(to top,var(--bg) 4%,color-mix(in srgb,var(--bg) 55%,transparent) 42%,transparent 75%),linear-gradient(to right,color-mix(in srgb,var(--bg) 75%,transparent),transparent 60%)}
+.hero .wrap{padding-bottom:84px;padding-top:140px}
+.pill{display:inline-flex;gap:8px;align-items:center;padding:7px 14px;border-radius:99px;border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 75%,transparent);font-size:13px;color:var(--mute);backdrop-filter:blur(8px)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 12px var(--ok)}
+.hero h1{font-size:clamp(46px,8.5vw,112px);margin:22px 0 18px;max-width:11ch}
+.hero p.lead{font-size:clamp(17px,2vw,21px);color:color-mix(in srgb,var(--text) 82%,transparent);max-width:56ch;margin:0 0 30px}
+.cta{display:flex;gap:12px;flex-wrap:wrap}
+
+/* stats */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-top:-34px;position:relative;z-index:2}
+.stats div{background:var(--panel);padding:26px 22px}
+.stats b{display:block;font:700 30px "Space Grotesk";letter-spacing:-.02em}
+.stats span{color:var(--mute);font-size:14px}
+@media(max-width:760px){.stats{grid-template-columns:repeat(2,1fr)}}
+
+section{padding:110px 0 0}
+.eyebrow{font:500 13px "JetBrains Mono";letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+h2{font-size:clamp(32px,5vw,56px);margin:14px 0 14px}
+.sub{color:var(--mute);max-width:62ch;font-size:18px;margin:0 0 44px}
+
+/* features */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media(max-width:960px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:620px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:26px;position:relative;overflow:hidden;transition:.25s}
+.card:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+.card::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;background:linear-gradient(90deg,var(--accent),transparent)}
+.ic{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:var(--panel2);border:1px solid var(--line);margin-bottom:16px;font-size:20px}
+.card h3{font-size:20px;margin-bottom:8px}
+.card p{margin:0;color:var(--mute);font-size:15px}
+
+/* showcase */
+.show{display:grid;grid-template-columns:1.1fr 1fr;gap:34px;align-items:center}
+@media(max-width:900px){.show{grid-template-columns:1fr}}
+.show.rev{grid-template-columns:1fr 1.1fr}
+@media(max-width:900px){.show.rev{grid-template-columns:1fr}}
+.shot{border-radius:var(--radius);overflow:hidden;border:1px solid var(--line);box-shadow:0 30px 80px -30px #000a;cursor:zoom-in;position:relative;background:var(--panel)}
+.shot img{display:block;width:100%;height:auto;transition:transform .6s}
+.shot:hover img{transform:scale(1.03)}
+.shot figcaption{position:absolute;left:14px;bottom:14px;padding:6px 12px;border-radius:99px;background:#000a;backdrop-filter:blur(8px);color:#fff;font-size:12.5px}
+.show h3{font-size:clamp(26px,3.4vw,40px);margin-bottom:14px}
+.show p{color:var(--mute);margin:0 0 14px}
+.tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.tags span{font:500 12.5px "JetBrains Mono";padding:6px 11px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--mute)}
+
+/* gallery */
+.gal{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+.gal .shot:nth-child(1){grid-column:span 8}
+.gal .shot:nth-child(2){grid-column:span 4}
+.gal .shot:nth-child(3){grid-column:span 4}
+.gal .shot:nth-child(4){grid-column:span 4}
+.gal .shot:nth-child(5){grid-column:span 4}
+.gal .shot img{height:100%;object-fit:cover}
+@media(max-width:800px){.gal .shot{grid-column:span 12!important}}
+
+/* status */
+.status{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:800px){.status{grid-template-columns:1fr}}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:26px}
+.box h3{font-size:20px;margin-bottom:14px}
+.box ul{margin:0;padding:0;list-style:none;display:grid;gap:10px;color:var(--mute);font-size:15px}
+.box li{padding-left:26px;position:relative}
+.box li::before{position:absolute;left:0;top:0}
+.box.ok li::before{content:"✓";color:var(--ok);font-weight:700}
+.box.todo li::before{content:"○";color:var(--accent2);font-weight:700}
+
+/* run */
+pre{margin:0;background:#05060a;color:#d6dcf0;border:1px solid var(--line);border-radius:14px;padding:20px 22px;overflow:auto;font:400 13.5px/1.7 "JetBrains Mono",monospace}
+pre .c{color:#6b7590}
+pre .k{color:#ff8a3d}
+.steps{display:grid;gap:16px;counter-reset:s}
+.step{display:grid;grid-template-columns:44px 1fr;gap:16px}
+.step::before{counter-increment:s;content:counter(s);width:44px;height:44px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);display:grid;place-items:center;font:700 18px "Space Grotesk";color:var(--accent)}
+.step h3{font-size:19px;margin:6px 0 8px}
+.step p{margin:0 0 10px;color:var(--mute);font-size:15px}
+
+/* credit */
+.credit{margin-top:110px;border-radius:calc(var(--radius) + 6px);padding:44px;background:radial-gradient(900px 300px at 0 0,color-mix(in srgb,var(--accent) 22%,transparent),transparent),var(--panel);border:1px solid var(--line);display:grid;grid-template-columns:1.4fr 1fr;gap:30px;align-items:center}
+@media(max-width:800px){.credit{grid-template-columns:1fr;padding:28px}}
+.credit h2{font-size:clamp(26px,3.6vw,40px);margin:8px 0 12px}
+.credit p{color:var(--mute);margin:0 0 12px}
+.credit .btns{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+@media(max-width:800px){.credit .btns{justify-content:flex-start}}
+
+footer{margin-top:90px;border-top:1px solid var(--line);padding:34px 0 60px;color:var(--mute);font-size:13.5px}
+footer .wrap{display:grid;gap:10px}
+footer small{max-width:90ch;display:block}
+
+/* lightbox */
+dialog{border:0;padding:0;background:transparent;max-width:96vw;max-height:94vh;overflow:visible}
+dialog::backdrop{background:#000d;backdrop-filter:blur(6px)}
+dialog img{max-width:96vw;max-height:90vh;border-radius:14px;display:block}
+dialog button{position:absolute;top:-14px;right:-14px;width:38px;height:38px;border-radius:50%;border:0;background:#fff;color:#000;font-size:20px;cursor:pointer}
+
+.reveal{opacity:0;transform:translateY(24px);transition:opacity .8s,transform .8s}
+.reveal.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}.hero img.bg{animation:none}}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="logo" href="#top">neo<b>AC</b></a>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#showcase">Showcase</a>
+      <a href="#status">Status</a>
+      <a href="#run">Run it</a>
+      <a class="btn primary" href="https://github.com/LakoMoor/neoAC">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <img class="bg" src="img/hero.jpg" alt="A pearl-white Nissan GT-R in neoAC, three-quarter view on a sunlit track">
+  <div class="wrap">
+    <span class="pill"><i class="dot"></i> Native on macOS (Metal) and Linux (Vulkan) · preview</span>
+    <h1>Assetto Corsa. <span class="grad">Native.</span></h1>
+    <p class="lead">neoAC runs the Assetto Corsa 1.16 engine as a real Mac and Linux program: written in Rust, drawn with wgpu, with its own sound mixer and launcher. No Wine, no emulation. It plays with your own copy of the game.</p>
+    <div class="cta">
+      <a class="btn primary" href="#run">Run it</a>
+      <a class="btn" href="https://github.com/LakoMoor/neoAC">View source</a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="stats reveal">
+    <div><b>Metal</b><span>Apple Silicon, straight to the GPU</span></div>
+    <div><b>Rust</b><span>one codebase, memory-safe</span></div>
+    <div><b>0</b><span>emulation layers or Wine</span></div>
+    <div><b>GPL-3</b><span>open source, built on rustyAC</span></div>
+  </div>
+
+  <section id="features">
+    <div class="eyebrow">What it does</div>
+    <h2 class="reveal">Built to <span class="grad">feel like the original.</span></h2>
+    <p class="sub reveal">The physics, renderer and menus come from the rustyAC port of the original game. neoAC adds the parts that make it a good citizen on a Mac.</p>
+    <div class="grid">
+      <article class="card reveal"><div class="ic">⚡</div><h3>Native on Metal</h3><p>The game's own renderer, drawn through wgpu on Metal. Runs as a normal macOS app, with a double-click start.</p></article>
+      <article class="card reveal"><div class="ic">🚀</div><h3>A modern launcher</h3><p>Cars and tracks with previews, skins, assists from newbie to pro, keys, graphics, weather and time of day, installing mods from a zip.</p></article>
+      <article class="card reveal"><div class="ic">💡</div><h3>Lights from the model</h3><p>Headlights, brake lamps and their colours are read from each car's own <code>lights.ini</code> and meshes. Every car lights up its own way.</p></article>
+      <article class="card reveal"><div class="ic">🌧️</div><h3>Rain and wet roads</h3><p>Choose a weather preset, the hour, and how slippery the track is. Rain falls in the world, not on the lens, and grip really changes.</p></article>
+      <article class="card reveal"><div class="ic">🚶</div><h3>Step out of the car</h3><p>Press <b>F</b> and walk around, first person, as in GTA. Press it near the car to sit back in.</p></article>
+      <article class="card reveal"><div class="ic">🛠️</div><h3>Debug panel</h3><p><b>F10</b> opens an in-game panel: frame times, telemetry, tyre contact points, the body's box, brightness and detail distance.</p></article>
+      <article class="card reveal"><div class="ic">🔊</div><h3>Own sound mixer</h3><p>The game's sound banks played by a mixer written for neoAC. No FMOD library needed.</p></article>
+      <article class="card reveal"><div class="ic">🔍</div><h3>Sharper picture</h3><p>Render density and a bicubic upscale with sharpening, so a lower internal resolution still looks clean.</p></article>
+      <article class="card reveal"><div class="ic">🧪</div><h3>Checked against the data</h3><p>Tests read every car's <code>.ini</code> files and compare power and weight to the car's own spec sheet.</p></article>
+    </div>
+  </section>
+
+  <section id="showcase">
+    <div class="eyebrow">Showcase</div>
+    <h2 class="reveal">Every hour, <span class="grad">every weather.</span></h2>
+    <p class="sub reveal">Screenshots taken in neoAC on a Mac. The cars and the track are Assetto Corsa's own content, loaded from a legal copy.</p>
+
+    <div class="show reveal">
+      <figure class="shot" data-full="img/rain_night.jpg"><img loading="lazy" src="img/rain_night.jpg" alt="Nissan GT-R at night in heavy rain with headlights on"><figcaption>GT-R · rain · 20:00 · lights on</figcaption></figure>
+      <div>
+        <h3>Night, rain, headlights.</h3>
+        <p>Heavy clouds, a wet road at 60% grip, and the lamps on. The red lenses are lit by the colour the car's data asks for, and the road ahead is lit from where the headlights really are.</p>
+        <div class="tags"><span>weather: heavy clouds</span><span>grip 0.6</span><span>hour 20</span><span>L = lights</span></div>
+      </div>
+    </div>
+    <div style="height:56px"></div>
+    <div class="show rev reveal">
+      <div>
+        <h3>Golden hour, any angle.</h3>
+        <p>The chase camera turns round the car with the right mouse button and stays where you leave it; double right click brings it back. The wheel moves it closer or further away.</p>
+        <div class="tags"><span>right button: orbit</span><span>wheel: zoom</span><span>double click: reset</span></div>
+      </div>
+      <figure class="shot" data-full="img/r34_dusk.jpg"><img loading="lazy" src="img/r34_dusk.jpg" alt="Nissan Skyline R34 at dusk with its headlights on"><figcaption>Skyline R34 · dusk · lights on</figcaption></figure>
+    </div>
+
+    <div style="height:56px"></div>
+    <div class="gal reveal">
+      <figure class="shot" data-full="img/side.jpg"><img loading="lazy" src="img/side.jpg" alt="Side profile of a black Nissan GT-R"><figcaption>GT-R · side profile</figcaption></figure>
+      <figure class="shot" data-full="img/huracan.jpg"><img loading="lazy" src="img/huracan.jpg" alt="Lamborghini Huracán Performante"><figcaption>Huracán Performante</figcaption></figure>
+      <figure class="shot" data-full="img/gt3.jpg"><img loading="lazy" src="img/gt3.jpg" alt="Porsche 911 GT3 R from behind"><figcaption>911 GT3 R</figcaption></figure>
+      <figure class="shot" data-full="img/m4_debug.jpg"><img loading="lazy" src="img/m4_debug.jpg" alt="BMW M4 with the F10 debug panel open"><figcaption>BMW M4 · F10 debug panel</figcaption></figure>
+      <figure class="shot" data-full="img/launcher.jpg"><img loading="lazy" src="img/launcher.jpg" alt="The neoAC launcher with a Lamborghini and the Drift track selected"><figcaption>The launcher</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="status">
+    <div class="eyebrow">Honest status</div>
+    <h2 class="reveal">A <span class="grad">preview,</span> not a finished game.</h2>
+    <p class="sub reveal">Here is what works today and what does not yet.</p>
+    <div class="status">
+      <div class="box ok reveal"><h3>Works</h3><ul>
+        <li>Driving on macOS with the original renderer, HUD and menus, keyboard and mouse</li>
+        <li>The launcher: cars, tracks, skins, assists, graphics, weather, mods</li>
+        <li>Headlights, brake lamps and rain; walking out of the car</li>
+        <li>Joining a Kunos <code>acServer</code> on the local network</li>
+        <li>Data tests across the cars in the repository</li>
+      </ul></div>
+      <div class="box todo reveal"><h3>Not yet</h3><ul>
+        <li>Linux is only checked to compile, not tested running</li>
+        <li>Gamepad support and Python apps</li>
+        <li>Turn signals: the base game has none, and no car here defines them</li>
+        <li>Sound is still approximate</li>
+        <li>Hosting a server from inside the game</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section id="run">
+    <div class="eyebrow">Run it</div>
+    <h2 class="reveal">From source, <span class="grad">in a few minutes.</span></h2>
+    <p class="sub reveal">You need your own copy of Assetto Corsa 1.16 (the Windows files: <code>content</code> and <code>system</code>). neoAC contains no game files.</p>
+    <div class="steps">
+      <div class="step reveal"><div><h3>Get the code and Rust</h3><p>Install Rust from rustup.rs, then clone the repository.</p>
+<pre><span class="k">git</span> clone https://github.com/LakoMoor/neoAC
+<span class="k">cd</span> neoAC</pre></div></div>
+      <div class="step reveal"><div><h3>Point it at your game</h3><p>Put the Assetto Corsa folder somewhere, and tell neoAC where it is.</p>
+<pre><span class="k">export</span> AC_ROOT=<span class="c">"/path/to/assettocorsa"</span></pre></div></div>
+      <div class="step reveal"><div><h3>Drive</h3><p>Open a car on a track straight away, or start the launcher.</p>
+<pre><span class="c"># straight into a car</span>
+cargo run --release -p rustyac-native -- --car ks_nissan_gtr --track drift
+
+<span class="c"># or package the launcher into the game folder and double-click it</span>
+sh packaging/package_unix.sh "$AC_ROOT"
+<span class="c"># then open rustyac.command (macOS) or rustyac.sh (Linux)</span></pre></div></div>
+    </div>
+    <p class="sub reveal" style="margin-top:26px">Handy options: <code>--weather</code>, <code>--hour</code>, <code>--grip</code>, <code>--orbit</code>, <code>--debug-panel</code>, <code>--shot</code>. Run with <code>--help</code> for all of them.</p>
+  </section>
+
+  <aside class="credit reveal">
+    <div>
+      <div class="eyebrow">Credit</div>
+      <h2>Built on <span class="grad">rustyAC.</span></h2>
+      <p>neoAC is not a fork of a game and not a new engine: it is built on <b>rustyAC</b>, the open-source Rust rewrite of Assetto Corsa by <b>thesupersupersigma</b>. The physics, the renderer and most of the code are theirs, and the licenses and copyright notices are kept as they are.</p>
+      <p>neoAC adds its own work on top, mostly for macOS and Linux. Thank you to the rustyAC project for making it possible.</p>
+    </div>
+    <div class="btns">
+      <a class="btn primary" href="https://github.com/thesupersupersigma/rustyAC">rustyAC on GitHub</a>
+      <a class="btn" href="https://rustyac.com">rustyac.com</a>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div><b>neoAC</b> · GPL-3.0-or-later (some parts MIT/Apache-2.0, see LICENSING.md) · built on rustyAC</div>
+    <small>neoAC is not affiliated with or endorsed by Kunos Simulazioni or 505 Games. Assetto Corsa is a trademark of its owners. neoAC contains no game files and needs your own legal copy of Assetto Corsa. The screenshots show Assetto Corsa's cars and track as neoAC draws them, and belong to their owners.</small>
+  </div>
+</footer>
+
+<dialog id="lb"><img alt=""><button aria-label="Close">×</button></dialog>
+<script>
+(function(){
+  var lb=document.getElementById('lb'), img=lb.querySelector('img');
+  document.querySelectorAll('.shot').forEach(function(f){
+    f.addEventListener('click',function(){img.src=f.dataset.full||f.querySelector('img').src;img.alt=f.querySelector('img').alt;lb.showModal();});
+  });
+  lb.addEventListener('click',function(){lb.close();});
+  var io='IntersectionObserver' in window?new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});},{threshold:.12}):null;
+  document.querySelectorAll('.reveal').forEach(function(el){io?io.observe(el):el.classList.add('in');});
+})();
+</script>
+</body>
+</html>

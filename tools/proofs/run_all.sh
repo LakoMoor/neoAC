@@ -1,0 +1,197 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Every proof of the project (see tools/proofs/README.md):
+#   bash tools/proofs/run_all.sh [--full]          every area, every case (≈ the milestone run), the port
+#                                                  against the game's kept results (--rerecord: the game again too)
+#   bash tools/proofs/run_all.sh --quick           every area on the small samples of tools/proofs/quick/ (≈ 30 min)
+#   bash tools/proofs/run_all.sh --changed <tag>   the areas the files changed since <tag> ask for
+#                                                  (tools/proofs/areas.map), every case of each
+#   ... [--rerecord] [--dry-run] [area ...]        record the game's recordings again / only say which
+#                                                  areas would run / only these areas
+# Needs: this repository, the ignored oracle/ and re/gold/ folders, the AC install (read only).
+# Each area writes into target/proofs/<area> and ends with "PROOF <area> cases= identical= different= errors= skipped= expected=";
+# the table below is made from those lines. Exit code 0 only when no area has a difference or an
+# ERROR (a crash, running out of memory or an error exit of either side: run once more, alone, after
+# all lanes, and the new verdict replaces it).
+# The areas run in lanes (below); the shared programs are built first with 8 jobs, then what an
+# area builds for itself with 2 jobs a lane (CARGO_BUILD_JOBS), 8 in all.
+here=$(cd "$(dirname "$0")" && pwd)
+repo=$(cd "$here/../.." && pwd)
+all="physics fresh sound render gui python replays net browser ai_page shaders launcher dumps yebis_sweep"
+# the lanes, each one area after another, all lanes at once: two lanes load the game's code (the
+# render oracle's and the car oracle's), never two areas of one lane; the others never load it
+# (a render or GUI compare keeps about 1.5 of the 16 threads busy, Task P1)
+lanes="render gui python yebis_sweep|fresh sound replays launcher|physics dumps shaders|net browser ai_page"
+mode=full; tag=; want=; dry=
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --quick) mode=quick ;;
+        --full) mode=full ;;
+        --changed) mode=changed; tag=$2; shift; [ -n "$tag" ] || { echo "--changed needs a tag" >&2; exit 2; } ;;
+        --rerecord) export PROOF_RERECORD=1 ;;
+        --dry-run) dry=1 ;;
+        -*) echo "unknown option $1" >&2; exit 2 ;;
+        *) want="$want $1" ;;
+    esac
+    shift
+done
+for a in $want; do [ -f "$here/$a.sh" ] || { echo "no area $a (areas: $all)" >&2; exit 2; }; done
+areas=${want:-$all}
+out=${PROOF_OUT:-$repo/target/proofs}
+mkdir -p "$out/rows"
+case $mode in
+    quick) export PROOF_QUICK=1 ;;
+    full) ;;
+    changed)
+        git -C "$repo" rev-parse -q --verify "$tag^{commit}" > /dev/null || { echo "no tag $tag" >&2; exit 2; }
+        echo "files changed since $tag:"
+        # committed since <tag> and not committed yet
+        picked=$(git -C "$repo" diff --name-only "$tag" | PROOF_SINCE=$tag bash "$here/areas.sh" 2> "$out/changed.txt")
+        sed 's/^/  /' "$out/changed.txt"
+        areas=$(for a in $areas; do case " $picked " in *" $a "*) printf '%s ' "$a" ;; esac; done)
+        ;;
+esac
+# the YEBIS settings sweep (≈ 1h30m) runs in --full only, or when named
+[ "$mode" = full ] || [ -n "$want" ] || areas=$(echo " $areas " | sed 's/ yebis_sweep / /')
+areas=$(echo $areas)
+echo "mode $mode: ${areas:-no area}"
+[ -n "$areas" ] && [ -z "$dry" ] || exit 0
+
+# one proof run at a time on this PC, whatever the checkout (a second one waits here)
+. "$here/lock.sh"
+proof_lock "$repo"
+
+rm -f "$out"/rows/*.row "$out/run.status"
+# each lane's areas of this run, in the lane's order
+picked_lanes=$(echo "$lanes" | tr '|' '\n' | while read -r lane; do
+    l=$(for a in $lane; do case " $areas " in *" $a "*) printf '%s ' "$a" ;; esac; done)
+    [ -n "$l" ] && echo "$l"
+done)
+jobs=${CARGO_BUILD_JOBS:-8}
+export CARGO_BUILD_JOBS=$jobs
+start_all=$(date +%s)
+
+# every program more than one area runs, built once here before any area starts (the areas skip
+# what PROOF_BUILT names): no area relinks an exe another lane is running, and a source changed
+# during the run changes nothing in it
+cd "$repo" || exit 2
+built=
+for t in car_oracle chassis_compare render_oracle audio_oracle; do
+    case $t in
+        car_oracle) uses="physics fresh replays" ;; chassis_compare) uses="physics fresh" ;;
+        render_oracle) uses="render gui python fresh yebis_sweep" ;; audio_oracle) uses="sound" ;;
+    esac
+    for u in $uses; do
+        case " $areas " in *" $u "*)
+            echo "building $t"
+            cargo build --release --locked --quiet --manifest-path "tools/$t/Cargo.toml" && built="$built $t"
+            break ;;
+        esac
+    done
+done
+case " $areas " in *" fresh "*|*" sound "*|*" replays "*|*" browser "*|*" ai_page "*|*" dumps "*)
+    echo "building rustyac, replay_hash"
+    cargo build --release --locked --quiet -p rustyac-game --bin rustyac --bin replay_hash && built="$built rustyac replay_hash" ;;
+esac
+case " $areas " in *" fresh "*)
+    echo "building track_survey"
+    cargo build --release --locked --quiet -p rustyac-physics --bin track_survey && built="$built track_survey" ;;
+esac
+case " $areas " in *" launcher "*)
+    echo "building rustyac-launcher"
+    cargo build --release --locked --quiet -p rustyac-launcher && built="$built rustyac-launcher" ;;
+esac
+export PROOF_BUILT=$built
+# less than 12 GB of memory free: two lanes joined into one, so fewer areas run at once
+free_kb=$(awk '/^MemFree:/ {print $2}' /proc/meminfo 2> /dev/null)
+if [ "${free_kb:-0}" -lt 12582912 ] && [ "$(echo "$picked_lanes" | grep -c .)" -gt 2 ]; then
+    echo "$((free_kb / 1048576)) GB free: fewer lanes"
+    picked_lanes=$(echo "$picked_lanes" | paste -d' ' - -)
+fi
+n=$(echo "$picked_lanes" | grep -c .)
+export CARGO_BUILD_JOBS=$(( jobs / n > 0 ? jobs / n : 1 ))
+# run.status: what tools/proof_tui watches (the mode, the start, each lane; "end" when done)
+{ echo "mode $mode"; echo "start $start_all"; echo "$picked_lanes" | sed 's/^/lane /'; } > "$out/run.status"
+
+# row <area> <PROOF line> <seconds>: the area's row of the table
+row() {
+    if [ -n "$2" ]; then
+        c=$(echo "$2" | sed -E 's/.*cases=([0-9]+).*/\1/'); i=$(echo "$2" | sed -E 's/.*identical=([0-9]+).*/\1/'); d=$(echo "$2" | sed -E 's/.*different=([0-9]+).*/\1/')
+        e=$(echo "$2" | sed -nE 's/.*errors=([0-9]+).*/\1/p'); k=$(echo "$2" | sed -nE 's/.*skipped=([0-9]+).*/\1/p'); x=$(echo "$2" | sed -nE 's/.*expected=([0-9]+).*/\1/p')
+    else
+        c=-; i=-; d="did not run ($(tail -n 1 "$out/$1.log"))"; e=-; k=-; x=-
+    fi
+    printf '| %s | %s | %s | %s | %s | %s | %s | %dm%02ds |\n' "$1" "$c" "$i" "$d" "${e:-0}" "${k:-0}" "${x:-0}" $(($3 / 60)) $(($3 % 60)) | tee "$out/rows/$1.row"
+}
+run_area() {
+    a=$1
+    start=$(date +%s)
+    bash "$here/$a.sh" > "$out/$a.log" 2>&1
+    code=$?
+    secs=$(( $(date +%s) - start ))
+    echo "$secs" > "$out/rows/$a.secs"
+    row "$a" "$(grep '^PROOF ' "$out/$a.log" | tail -n 1)" "$secs"
+    [ "$code" = 0 ] || : > "$out/rows/$a.bad"
+}
+rm -f "$out"/rows/*.bad
+while read -r lane; do
+    ( for a in $lane; do run_area "$a"; done ) &
+done <<LANES
+$picked_lanes
+LANES
+wait
+
+# the ERROR cases once more, each area's alone (no other lane running): the new verdict replaces the
+# ERROR line; shortcut: a case whose quick key is not its name (launcher, sound's e2e) does not run
+# again and stays ERROR
+for a in $areas; do
+    grep -q '^ERROR ' "$out/$a/cases.log" 2> /dev/null || continue
+    sed -nE 's/^ERROR ([^|]*[^ |]) *(\|.*)?$/\1/p' "$out/$a/cases.log" | sed 's/[][\.*^$+?(){}|/]/\\&/g' > "$out/rows/$a.rerun"
+    echo "running the $(grep -c '' "$out/rows/$a.rerun") ERROR cases of $a again, alone"
+    PROOF_OUT=$out/rerun PROOF_QUICK=1 PROOF_QUICK_RE=$out/rows/$a.rerun bash "$here/$a.sh" > "$out/rerun_$a.log" 2>&1
+    awk 'function key(l) { sub(/^[A-Z]+ /, "", l); sub(/ *[|].*$/, "", l); return l }
+        NR == FNR { if ($0 ~ /^(IDENTICAL|DIFFERENT|ERROR|SKIPPED|EXPECTED) /) again[key($0)] = $0; next }
+        /^ERROR / && (key($0) in again) { print again[key($0)] " (run again alone)"; next } { print }' \
+        "$out/rerun/$a/cases.log" "$out/$a/cases.log" > "$out/rows/$a.cases" && mv "$out/rows/$a.cases" "$out/$a/cases.log"
+    l=$out/$a/cases.log
+    i=$(grep -c '^IDENTICAL ' "$l"); d=$(grep -c '^DIFFERENT ' "$l"); e=$(grep -c '^ERROR ' "$l"); k=$(grep -c '^SKIPPED ' "$l"); x=$(grep -c '^EXPECTED ' "$l")
+    row "$a" "PROOF $a cases=$((i + d + e)) identical=$i different=$d errors=$e skipped=$k expected=$x" "$(cat "$out/rows/$a.secs")"
+    rm -f "$out/rows/$a.bad"; [ $((d + e)) = 0 ] || : > "$out/rows/$a.bad"
+done
+
+secs=$(( $(date +%s) - start_all ))
+table=$out/table.md
+{
+    echo "| area | cases | identical | different | errors | skipped | expected skips | time |"
+    echo "|---|---|---|---|---|---|---|---|"
+    for a in $areas; do cat "$out/rows/$a.row"; done
+    printf '| all (%s, wall clock) | | | | | | | %dh%02dm |\n' "$mode" $((secs / 3600)) $((secs % 3600 / 60))
+} > "$table"
+echo; cat "$table"
+# every ERROR case (red): a crash, out of memory or an error exit, still there when run alone
+for a in $areas; do grep -h '^ERROR ' "$out/$a/cases.log" 2> /dev/null | sed "s/^ERROR /$a /"; done > "$out/errors.txt"
+n=$(grep -c '' "$out/errors.txt")
+if [ "$n" -gt 0 ]; then printf '\n\033[31m%s cases ERROR\033[0m (%s):\n' "$n" "$out/errors.txt"; sed 's/^/  /' "$out/errors.txt"
+else printf '\n0 cases ERROR\n'; fi
+# every case left out, with its reason (red when there is one: nothing drops out silently)
+for a in $areas; do grep -h '^SKIPPED ' "$out/$a/cases.log" 2> /dev/null; done > "$out/skipped.txt"
+n=$(grep -c '' "$out/skipped.txt")
+if [ "$n" -gt 0 ]; then printf '\n\033[31m%s cases skipped\033[0m (%s):\n' "$n" "$out/skipped.txt"; sed 's/^SKIPPED /  /' "$out/skipped.txt"
+else printf '\n0 cases skipped\n'; fi
+# every case the last run of this mode had and this one has not (red: nothing drops out silently);
+# a case retired on purpose goes in tools/proofs/retired.txt ("<area> <case> | reason")
+mkdir -p "$out/cases/$mode"
+for a in $areas; do
+    [ -f "$out/$a/cases.log" ] || continue
+    sed -nE 's/^(IDENTICAL|DIFFERENT|ERROR|SKIPPED|EXPECTED) ([^|]*[^ |]) *(\|.*)?$/\2/p' "$out/$a/cases.log" | sort -u > "$out/cases/$mode/$a.new"
+    [ -f "$out/cases/$mode/$a.txt" ] && sort -u -o "$out/cases/$mode/$a.txt" "$out/cases/$mode/$a.txt" && comm -23 "$out/cases/$mode/$a.txt" "$out/cases/$mode/$a.new" |
+        grep -vxF -f <(sed -nE "s/^$a ([^|]*[^ |]) *\|.*/\1/p" "$here/retired.txt") | sed "s/^/$a /"
+    mv "$out/cases/$mode/$a.new" "$out/cases/$mode/$a.txt"
+    cp "$out/$a/times.tsv" "$out/cases/$mode/$a.times" 2> /dev/null  # for proof_tui's next ETA
+done > "$out/vanished.txt"
+n=$(grep -c '' "$out/vanished.txt")
+if [ "$n" -gt 0 ]; then printf '\n\033[31m%s cases vanished since the last %s run\033[0m (%s):\n' "$n" "$mode" "$out/vanished.txt"; sed 's/^/  /' "$out/vanished.txt"
+else printf '0 cases vanished since the last %s run\n' "$mode"; fi
+echo "end $(date +%s)" >> "$out/run.status"
+! ls "$out"/rows/*.bad > /dev/null 2>&1

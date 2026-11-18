@@ -1,0 +1,45 @@
+[package]
+name = "render_oracle"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+description = "Test oracle for rustyac-render: runs Assetto Corsa's own GraphicsManager, ShaderManager, KN5IO, SkyBox and CameraForward (mapped from acs.exe, never executed as a program) on a WARP device, off screen, and the Rust port on the same scene, both through one command log, and compares the logs and the pixels"
+
+# Task 47c: the OpenVR stand-in as a DLL for rustyac.exe (openvr_api.dll)
+[lib]
+name = "openvr_api"
+path = "src/openvr_standin.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustyac-render = { path = "../../crates/rustyac-render" }
+rustyac-gui = { path = "../../crates/rustyac-gui" }
+rustyac-physics = { path = "../../crates/rustyac-physics" }
+rustyac-content = { path = "../../crates/rustyac-content" }
+rustyac-math = { path = "../../crates/rustyac-math" }
+rustyac-python = { path = "../../crates/rustyac-python" }
+png = "0.17"
+
+[dependencies.windows]
+version = "0.62"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[features]
+# the port side on kgl's wgpu backend (a binary of its own: build it into its own target folder)
+wgpu = ["rustyac-render/backend-wgpu"]
+
+[profile.release]
+opt-level = 2
+
+# standalone crate, not part of the parent workspace
+[workspace]

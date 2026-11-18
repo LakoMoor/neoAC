@@ -1,0 +1,2499 @@
+# Task Y7f: YEBIS for everything AC ships (v0.50.0)
+
+## Resume here
+
+- **Done in two sessions.** Session 1 answered step 1 from the code and stopped (rule 32: the airy disc
+  port is ~2 sessions). Super's decision for session 2: the airy disc is **not ported before v1.0**; it is
+  accepted, its gate is ported, and a log line says when the game would draw it. Steps 2-4 done, v0.50.0.
+- Next: the custom-filter key tasks after v1.0 (plan at the end of this section).
+- Commits: `d39d09b` (step 1 report), `28a7d92` (airy gate + log line, refusals), `005264e` (README, this
+  report), then `chore(release): v0.50.0`.
+- End proofs (re/scratch/taskY7f/end.sh): clippy native, both wasm targets, wgpu, web: clean;
+  render_oracle's clippy: the same 41 old errors as Y7e. Sweep 10/10 IDENTICAL, render post rows 141/141
+  IDENTICAL, `run_all.sh --quick` all IDENTICAL but one sound case (FMOD's known crash inside
+  fmod64.dll at frame 1408), IDENTICAL when run again alone. Disk: 27 GB free at start, 29 GB at the end.
+  No new files in the web zip.
+
+## Step 1: does the airy disc draw?
+
+The prompt's premise is off: **vintage.ini has `[AIRYDISC] ENABLED=0`**. `ENABLED=1` is in **b&w.ini and
+sepia.ini** (all shipped filters: `WAVELENGTH=500`, `AIRY_DISC_DISPERSION_ENABLED=1`). The sweep
+matched because no swept camera is narrow enough (the rule below). From the code:
+
+- `initPostProcessing` 0x140024ca0: init flag 0x40000 iff `ENABLED`, then `SetApertureAiryDiscEnable` and
+  `SetApertureAiryDiscParameters(WAVELENGTH * 1e-9, DISPERSION != 0)`. The wrapper 0x14039c6a0 always
+  passes the third bool as 1 (`mov r9b, 1`), so +0x9b5 = 1 and the +0xb87 (DOF active) escape never fires.
+- `UpdateParameters_EffectiveApertureAiryDiscEnable` 0x1403ba090 (each frame): on iff +0x9ad (enable),
+  +0x6ea = 0 (only `ApplyDepthOfFieldFilter` sets it; AC never calls it), +0xb88 = 1 (the depth of
+  field's optical parameters computed), and `W * (+0xba8) * (dispersion ? 7e-7/5.8756e-7 : 1) > 0.7259524`,
+  W = scene target width.
+- `UpdateParameters_DepthOfFieldOpticalParameters` 0x1403b92f0 runs every frame whatever the DOF enable:
+  +0xb88 = `CDepthOfField[0x164]`, +0xba8 = `GetAiryDiscDiameterToScreenRatio(wavelength, 1) * 0.5`
+  = `focus*N/(focus-focal) * 2.4392 * wavelength / sensor * 0.5`, N from `CalculateOpticalParameters`
+  0x14042c150 (aperture parameter 2: `focal^0.5 * F/base_f * base_f^0.5`; CDepthOfField +0x388/+0x38c
+  are 0, so no stop rounding and no clamp). The focus, sensor and F-number inputs are only written by
+  `SetDepthOfFieldParameters` 0x1403c2e90, which AC calls only while `dofEnabled && dofActive`
+  (`setPostProcessing` 0x140025080:158); they keep their last values after the DOF goes inactive, and are
+  never initialised before the first DOF frame (heap from malloc).
+- Worked out: with λ 500 nm, sensor 0.24, dispersion on, it draws iff `W * N * M > 239,780`, M =
+  focus/(focus-focal). F 11 (b&w, sepia): vertical FOV 1°, focus 100 m gives N*M ≈ 86, on at W ≥ ~2800;
+  FOV 0.5° gives ≈ 128, on at 1920. FOV 2° needs W ≥ ~4100; normal FOVs never. Shipped track cameras
+  with DOF (`DOF_FACTOR` non-zero, so DOF active) reach `MIN_FOV=1` (45 cameras, e.g. ks_laguna_seca,
+  ks_silverstone1967), 0.75 (1), 0.5 (2). So: **b&w or sepia, DOF on in video.ini, a replay track camera
+  zoomed in to about 1° or less, at 1440p-4K.** vintage, and every filter with `ENABLED=0`, never draw it.
+- The draw: `EndPostEffectScene_InternalProcess` 0x1403b5f40 (`cmp [rdi+0xba5]` at 0x1403b69e9):
+  resolve, then `CTextureUtil::GaussianFilter_UnlimitedRadius` 0x14040bd20 of the scene with radius
+  `width * (+0xba8) * 0.3443752` clamped to 5.0 (4.776911 with dispersion) unless +0x3f8, dispersion
+  scaling r/g/b by 1.0467017 / 0.79140854 / 0.9190551, plus the +0x3f0/+0x3f8 loop;
+  `EndPostEffectScene_PreProcess` 0x1403b56d0:196-215 changes target indices when it is on.
+
+## Step 1b: the gate and its log line (session 2)
+
+- `yebis_cb::airy_disc_draws(filter, focus, vfov, width)` is the gate above: `ENABLED`, the +0x164 checks
+  (focus, sensor, N, focal/N > 0, 0 < FOV < π), the ratio and the 0.7259524 threshold, with the focal and N
+  from `optics()`, which `Dof::new` now shares. Self-check `airy_disc_test_needs_a_narrow_dof_camera`
+  (b&w keys: 0.5° at 2560 draws; 1° at 1920, 50° at 3840, no DOF frame yet, `ENABLED=0` do not).
+- `Yebis::render` keeps the last DOF frame's focus (`airy_focus`, the game's persistence) and the first time
+  the gate passes it prints once per run: `yebis: the game draws the airy disc ([AIRYDISC] ENABLED=1, DOF
+  on, a narrow camera) from here: not ported yet, frames differ`. Never a refusal: b&w and sepia ship it.
+
+## Step 2: refusals instead of ignored keys
+
+`PostEffect::new` refuses, with the same per-frame path and wording as the other unported keys
+(`yebis: [SECTION] KEY other than V: a custom-filter key, not ported yet`, the frame is not drawn):
+
+- `[TONEMAPPING] SCALE_WIDTH`/`SCALE_HEIGHT` other than 1 and `OFFSET_X`/`OFFSET_Y` other than 0:
+  `setPostProcessing` 0x140025080:90-93 calls `SetTonemapViewportScale` every frame. Every shipped filter
+  has 1/1/0/0.
+- `[FEEDBACK] ENABLED` and `[LENSDISTORTION] ENABLED` other than 0 (`setPostProcessing` :219-226, :319-324).
+  Their other keys reach YEBIS only when `ENABLED` is 1, so they are accepted (no effect).
+- Accepted as no effect: `[GLARE] SHAPE_AFTERIMAGE_LUMINANCE/LENGTH` (written into the glare shape, but
+  `GenerateGlare_Afterimage` 0x140419fe0 returns 0 without the after-image object; `AFTER_IMAGE` is refused).
+
+The key table (Task Y7b, below) now has no ignored key: 32 refused, 10 no effect, 3 gap (logged).
+
+## Step 3: README
+
+The README's "Post-processing (YEBIS, desktop)" paragraph: exact for every shipped filter at every setting
+(the sweep); not yet: the airy disc of b&w/sepia (DOF on, replay track camera ≈1° or less, a log line) and
+custom filters with unshipped keys or values (refused, the key named), linking the key table.
+
+## After v1.0: custom-filter keys
+
+One task per feature group from the Task Y7b estimate (below), **tone map curves and bloom first** (the
+keys custom filters change most), then auto exposure, glare (after image, anamorphic, library-shape ghost,
+star, threshold 0), colour temperature, chromatic aberration off, vignetting, DOF, feedback, lens distortion,
+the tone-map viewport, and the **airy disc**:
+
+- The airy disc (~2 sessions): the gate is ported; left is `GaussianFilter_UnlimitedRadius` 0x14040bd20
+  (2368 bytes: `Resample` downsample chain, `GaussianFilterMax61x61_2Pass` 0x14040b470, which the port
+  lacks, `MadTn` blend), the airy section of `EndPostEffectScene_InternalProcess` and the PreProcess index
+  change. Rows: a narrow-FOV replay track camera with DOF on, b&w and sepia, dispersion on/off, at 1920
+  (FOV 0.5) and 2560+ (FOV 1); the call log must match.
+- **Uninitialised memory:** the game's focus, sensor and F-number (+0x6cc/+0x6d0/+0x6d8) are heap from
+  malloc until the first DOF frame, so the gate before it reads whatever was there; the port says off. Decide
+  then whether that is a differences.md entry (it cannot be reproduced) or provable some other way.
+
+# Task Y7b: every ppfilter key (custom filters)
+
+## Resume here
+
+- **Stopped before step 2 (rule 32), no release.** Step 1 (the key table below) is done. Step 2 is
+  far bigger than the prompt's ~2 sessions: 43 keys in 16 YEBIS features are refused or ignored,
+  about 14-16 sessions at one feature per session (estimate below).
+- **Next:** split step 2 into tasks; the first, as the prompt says, is the tone map (`FUNCTION` 0 and
+  3-8, `HDR` 0) plus the bloom (`BLOOM_NUM_LEVELS`, the 3x3 gaussian, `PRECISION`).
+
+## Step 1: the key table
+
+Source: `CameraForwardYebis::readPPSetOptions` 0x140026150 (the desktop reader; the VR path
+`YebisPP::readPPSet` 0x14002cd60 reads the same keys). Scratch: `re/scratch/taskY7b/keys.py` pulls
+(section, key, getter, pp field) out of the pseudo-C, `values.py` lists each key's values across the
+10 shipped filters, `table.py` adds the port's status.
+
+What the game does with a value (rules from code):
+
+- No range anywhere: neither the reader nor `setPostProcessing` 0x140025080 clamps a key.
+- A missing or empty key is 0 (`INIReader::getFloat` 0x1402358c0 / `getInt`); text that does not
+  start with a number throws (`invalid stof argument`, `stof argument out of range`). The port's
+  `IniReader` (`crates/rustyac-physics/src/data/ini.rs`) does the same, the throw as an `Err`.
+- Every section sits behind `hasSection`, so a missing section leaves the pp field as it was: 0 on
+  the first load (the constructor's `memset(&pp, 0, 0x648)`), the previous filter's value after a
+  filter change. The port builds its effect from the new filter alone, so a filter change to a filter
+  with a section missing is not the game's (not proven either way; no shipped filter lacks a section).
+- "Shipped values" is every value in the 10 shipped filters. **done-proven**: rows vary the key
+  (two or more shipped values, or a `TEST_FILTERS` edit in `tools/render_oracle/src/root.rs`), all
+  IDENTICAL. **done-not-proven**: ported, but every row has the same value. **refused**: the port
+  stops with an error for the listed values. **ignored**: the port never reads the key, so a custom
+  filter's value changes nothing (worse than refused: no error). **no effect**: the game reads it but
+  nothing uses it (at the values the port accepts). **gap (logged)**: the airy disc (Task Y7f): accepted,
+  the gate is ported and a log line says when the game would draw it.
+
+Totals (after Task Y7f): 118 keys; 43 done-proven, 30 done-not-proven, 32 refused, 0 ignored, 10 no effect,
+3 gap (logged).
+
+| section | key | type | shipped values | status | note |
+|---|---|---|---|---|---|
+| DEBUG | DOF_FOCUS | Float | - | no effect | updateYebisParameters 0x140029e30 overwrites dofFocusDistance from the camera every frame |
+| VARIOUS | APERTURE_RESULT_BLUR_MOD | Int | 1 | no effect | stored only; nothing reads apertureResltBlurModify |
+| TONEMAPPING | HDR | Int | 1 | refused | only 1 |
+| TONEMAPPING | EXPOSURE | Float | 0.28 | done-not-proven | one value in every row |
+| TONEMAPPING | GAMMA | Float | 0.60 / 1.0 / 1.05 / 1.1 / 1.2 / 1.20 / 1.30 | done-proven |  |
+| TONEMAPPING | FUNCTION | Int | -1 / 1 / 2 | refused | only -1, 1, 2 (-1 = 2); 0 and 3-8 refused |
+| TONEMAPPING | SCALE_WIDTH | Float | 1 | refused (not 1) | tonemap viewport, SetTonemapViewportScale every frame (setPostProcessing :90-93) |
+| TONEMAPPING | SCALE_HEIGHT | Float | 1 | refused (not 1) | as SCALE_WIDTH |
+| TONEMAPPING | OFFSET_X | Float | 0 | refused (not 0) | as SCALE_WIDTH |
+| TONEMAPPING | OFFSET_Y | Float | 0 | refused (not 0) | as SCALE_WIDTH |
+| TONEMAPPING | MAPPING_FACTOR | Float | 32 | done-not-proven | one value in every row |
+| AUTO_EXPOSURE | ENABLED | Int | 1 | done-proven |  |
+| AUTO_EXPOSURE | DELAY | Float | 0 | refused | only 0 |
+| AUTO_EXPOSURE | MIN | Float | 0.1 / 0.2 / 0.25 / 0.26 / 0.3 | done-proven |  |
+| AUTO_EXPOSURE | MAX | Float | 0.45 / 0.5 / 0.7 | done-proven |  |
+| AUTO_EXPOSURE | TARGET | Float | 0.20 / 0.26 / 0.28 / 0.32 / 0.35 | done-proven |  |
+| AUTO_EXPOSURE | INFLUENCED_BY_GLARE | Float | 0 | refused | only 0 |
+| AIRYDISC | ENABLED | Int | 0 / 1 | gap (logged) | b&w.ini and sepia.ini have 1, vintage.ini 0; the gate (`yebis_cb::airy_disc_draws`) is ported, the draw is not (Task Y7f) |
+| AIRYDISC | WAVELENGTH | Float | 500 | gap (logged) | read by the gate |
+| AIRYDISC | AIRY_DISC_DISPERSION_ENABLED | Int | 1 | gap (logged) | read by the gate |
+| FEEDBACK | ENABLED | Int | 0 | refused (not 0) | SetFeedbackEnable (setPostProcessing :219-226) |
+| FEEDBACK | ASPECT_RATIO | Float | 0 | no effect | the game sets it only with ENABLED 1 (refused) |
+| FEEDBACK | WEIGHT | Float | 0.0425 / 0.05 | no effect | as ASPECT_RATIO |
+| FEEDBACK | CURRENT_WEIGHT | Float | -0.05 | no effect | as ASPECT_RATIO |
+| FEEDBACK | TIME | Float | 0.1 | no effect | as ASPECT_RATIO |
+| VIGNETTING | STRENGTH | Float | 0.0 / 0.035 / 0.25 //6 / 0.4 | done-proven |  |
+| VIGNETTING | FOV_DEPENDENCE | Float | 0 | refused | only 0 |
+| CHROMATIC_ABERRATION | ENABLED | Int | 1 | refused | only 1 (0 refused, and shimmer without CA) |
+| CHROMATIC_ABERRATION | SAMPLES | Int | 5 | done-not-proven | one value in every row |
+| CHROMATIC_ABERRATION | LATERAL_DISPERSION | Float2 | 0.0025,0.0025 / 0.005,0.005 | done-proven |  |
+| CHROMATIC_ABERRATION | UNIFORM_DISPERSION | Float2 | 0,0 / 0.0,0.0 / 0.0005,0.0005 | done-proven |  |
+| DIAPHRAGM | ROTATE_SCALE | Float | 0 | done-not-proven | one value in every row |
+| DIAPHRAGM | ROTATE_OFFSET | Float | 0 / 2 | done-proven |  |
+| DIAPHRAGM | TYPE | Int | 1 / 2 / 3 | done-proven |  |
+| COLOR | HUE | Float | 0 / 20 | done-proven |  |
+| COLOR | SATURATION | Float | 0 / 0.8 / 0.85 / 0.95 / 0.96 / 1.55 / 9.0 | done-proven |  |
+| COLOR | BRIGHTNESS | Float | 1 / 1.0 / 1.08 / 1.1 / 1.15 / 1.5 / 1.65 | done-proven |  |
+| COLOR | CONTRAST | Float | 0.80 / 1 / 1.0 / 1.05 / 1.25 | done-proven |  |
+| COLOR | SEPIA | Float | 0 / 0.5 / 0.9 / 1 | done-proven |  |
+| COLOR | COLOR_TEMP | Float | 6400 / 6500 / 7200 | refused | below 4000 K refused |
+| COLOR | WHITE_BALANCE | Float | 4500 / 6400 / 6500 | refused | below 4000 K refused |
+| GLARE | SHAPE | Int | 11 / 6 | done-proven |  |
+| GLARE | GHOST | Int | 0 / 1 | done-proven |  |
+| GLARE | GHOST_CONCENTRIC_DISTORTION | Float | 1.0 / 5.5 | refused | 0 with the library-shape ghost refused |
+| GLARE | AFTER_IMAGE | Int | 0 | refused | only 0 |
+| GLARE | ANAMORPHIC | Int | 0 | refused | only 0 |
+| GLARE | LUMINANCE | Float | 0.4 / 1.5 / 1.6 / 2.5 / 3 / 3.0 | done-proven |  |
+| GLARE | PRECISION | Int | 0 | refused | only 0 |
+| GLARE | BLUR | Float | 1 | done-proven |  |
+| GLARE | BLOOM_FILTER_THRESHOLD | Float | 0.0002 / 0.002 | done-proven |  |
+| GLARE | BLOOM_GAUSSIAN_RADIUS_SCALE | Float | .95 | refused | values giving the 3x3 (radius 2) gaussian refused |
+| GLARE | BLOOM_LUMINANCE_GAMMA | Float | 1.5 / 2 | done-proven |  |
+| GLARE | BLOOM_NUM_LEVELS | Int | 0 | refused | only 0 |
+| GLARE | GENERATION_RANGE_SCALE | Float | 1 | done-not-proven | one value in every row |
+| GLARE | THRESHOLD | Float | 0.5 / 15 / 2 / 3.5 / 5 | refused | 0 refused |
+| GLARE | BRIGHT_PASS | Int | 0 / 1 | done-proven |  |
+| GLARE | STAR_FILTER_THRESHOLD | Float | 0.0002 / 0.002 | done-proven |  |
+| GLARE | STAR_SOFTNESS | Float | 0.015 / 0.5 / 1 | done-proven |  |
+| GLARE | STAR_LENGTH_FOV_DEPENDENCE | Float | 0 | refused | only 0 |
+| GLARE | USE_CUSTOM_SHAPE | Int | 0 / 1 | refused | 0 with GHOST=1 (library-shape ghost) refused |
+| GLARE | SHAPE_LUMINANCE | Float | 5 / 8 | done-proven |  |
+| GLARE | SHAPE_BLOOM_LUMINANCE | Float | .0125 / 0.01 / 0.028 / 0.03 / 0.038 | done-proven |  |
+| GLARE | SHAPE_BLOOM_DISPERSION | Float | 0.03 / 0.05 | done-proven |  |
+| GLARE | SHAPE_BLOOM_DISPERSION_BASE_LEVEL | Int | 2 | done-not-proven | one value in every row |
+| GLARE | SHAPE_GHOST_LUMINANCE | Float | 0.1 / 0.15 / 1 | done-proven |  |
+| GLARE | SHAPE_GHOST_HALO_LUMINANCE | Float | 0.005 / 05 | done-proven |  |
+| GLARE | SHAPE_GHOST_DISTORTION | Float | 0 | refused | library-shape ghost only |
+| GLARE | SHAPE_GHOST_SHARPENESS | Float | 0 | refused | library-shape ghost only |
+| GLARE | SHAPE_STAR_LUMINANCE | Float | 0.01 / 0.025 / 0.045 / 0.05 | done-proven |  |
+| GLARE | SHAPE_STAR_STREAKS_NUMBER | Int | 6 | done-proven |  |
+| GLARE | SHAPE_STAR_LENGTH | Float | .3 / 0.2 / 0.25 / 0.5 | done-proven |  |
+| GLARE | SHAPE_STAR_SECONDARY_LENGTH | Float | 1 | done-proven |  |
+| GLARE | SHAPE_STAR_ROTATION | Float | 1 | done-not-proven | one value in every row |
+| GLARE | SHAPE_STAR_INCLINATION_ANGLE | Float | 3 | done-not-proven | one value in every row |
+| GLARE | SHAPE_STAR_DISPERSION | Float | 0 | refused | only 0 with a custom shape |
+| GLARE | SHAPE_STAR_FORCE_DISPERSION | Int | 0 | refused | only 0 with a custom shape |
+| GLARE | SHAPE_AFTERIMAGE_LUMINANCE | Float | 80 | no effect | GenerateGlare_Afterimage 0x140419fe0 returns 0 without the after-image object (AFTER_IMAGE is refused) |
+| GLARE | SHAPE_AFTERIMAGE_LENGTH | Float | 0.5 | no effect | as SHAPE_AFTERIMAGE_LUMINANCE |
+| HEAT_SHIMMER | HEAT_PARTICLE_RADIUS | Float | 0.75 | done-not-proven | one value in every row |
+| HEAT_SHIMMER | HEAT_PARTICLE_SHIMMER | Float | 0.004 | done-proven |  |
+| HEAT_SHIMMER | HEAT_PARTICLE_COORD | Float | 1.5 | done-not-proven | one value in every row |
+| HEAT_SHIMMER | HEAT_PARTICLE_FRACTAL_OCTAVES | Float | 3 | done-not-proven | one value in every row |
+| HEAT_SHIMMER | HEAT_PARTICLE_MAX_NUMBER | Int | 10 | done-not-proven | one value in every row |
+| HEAT_SHIMMER | HEAT_PARTICLE_LIFE_MULT | Float | 1.0 | done-not-proven | one value in every row |
+| HEAT_SHIMMER | HEAT_PARTICLE_MIN_LIFE | Float | 0.75 | done-not-proven | one value in every row |
+| HEAT_SHIMMER | HEAT_PARTICLE_INTENSITY_MULT | Float | 0.3 | done-not-proven | one value in every row |
+| HEAT_SHIMMER | HEAT_PARTICLE_MIN_INTENSITY | Float | 0.15 | done-not-proven | one value in every row |
+| HEAT_SHIMMER | HEAT_PARTICLE_VELOCITY_MULT | Float | 0.2 | done-not-proven | one value in every row |
+| HEAT_SHIMMER | HEAT_PARTICLE_MIN_VELOCITY | Float | 0 | done-not-proven | one value in every row |
+| HEAT_SHIMMER | HEAT_PARTICLE_RADIUS_VELOCITY_MULT | Float | 0.1 | done-not-proven | one value in every row |
+| GODRAYS | USE_SUN_LIGHT | Int | 1 | done-not-proven | one value in every row |
+| GODRAYS | DIFFRACTION_RING | Float | 0.10 / 0.15 / 0.25 | done-proven |  |
+| GODRAYS | DIFFRACTION_RING_RADIUS | Float | 5 | done-not-proven | one value in every row |
+| GODRAYS | DIFFRACTION_RING_ATTENUATION | Float | 0.1 / 0.5 | done-proven |  |
+| GODRAYS | DIFFRACTION_RING_SPECTRUM_ORDER | Float | 1 | done-not-proven | one value in every row |
+| GODRAYS | DIFFRACTION_RING_OUTER_COLOR | Float4 | 0.5,0.5,0.5,0.5 | done-not-proven | one value in every row |
+| GODRAYS | COLOR | Float4 | 1,1,1,1 | done-not-proven | one value in every row |
+| GODRAYS | LENGTH | Float | 11.0 / 12.0 / 2.5 / 25.0 / 8.0 | done-proven |  |
+| GODRAYS | GLARE_RATIO | Float | 0.001 / 0.003 / 0.005 / 0.015 / 0.02 | done-proven |  |
+| GODRAYS | ANGLE_ATTENUATION | Float | 10 / 5 | done-proven |  |
+| GODRAYS | NOISE_MASK | Float | 0.01 | done-not-proven | one value in every row |
+| GODRAYS | NOISE_FREQUENCY | Float | 1 | done-not-proven | one value in every row |
+| GODRAYS | DEPTH_MASK_THRESHOLD | Float | 0.9998 / 0.999999999 | done-proven |  |
+| DOF | APERTURE_PARAMETER | Int | 2 | refused | only 2 |
+| DOF | APERTURE_F_NUMBER | Float | 11 / 12 / 8 | done-proven |  |
+| DOF | IMAGE_SENSOR_HEIGHT | Float | 0.24 | done-not-proven | one value in every row |
+| DOF | BASE_FOV | Float | 50 / 54 / 60 | done-proven |  |
+| DOF | ADAPTIVE_APERTURE_FACTOR | Float | 0.5 / 0.65 | done-proven |  |
+| DOF | APERTURE_FRONT_LEVELS_NUMBER | Int | -1 | refused | only -1 |
+| DOF | APERTURE_BACK_LEVELS_NUMBER | Int | -1 | refused | only -1 |
+| DOF | EDGE_QUALITY | Int | 1 / 2 / 3 | refused | only -1..4 |
+| DOF | BACKGROUND_MASK_THRESHOLD | Float | 0.1 | done-not-proven | one value in every row |
+| DOF | APERTURE_SHAPE | Int | 2 / 3 / 4 | refused | only 2-4 |
+| LENSDISTORTION | ENABLED | Int | 0 | refused (not 0) | SetLensDistortionEnable (setPostProcessing :319-324) |
+| LENSDISTORTION | ROUNDNESS | Float | 0.05 | no effect | the game sets it only with ENABLED 1 (refused) |
+| LENSDISTORTION | SMOOTHNESS | Float | 1.0 | no effect | as ROUNDNESS |
+| HEAT_SHIMMER | HEAT_PARTICLE_COLOR | Float3 | 1,1,1 | done-not-proven | one value in every row |
+| HEAT_SHIMMER | HEAT_PARTICLE_POSITION_VELOCITY | Float3 | 0,0,0.2 | done-not-proven | one value in every row |
+
+### Step 2 estimate (why the task stopped)
+
+The refused and ignored keys are 16 separate YEBIS features, each a set of new programs, targets
+and call-log order to port and prove (past tasks: about one session per feature):
+
+| feature | keys | estimate |
+|---|---|---|
+| tone map curves | `FUNCTION` 0, 3-8; `HDR` 0 | 1-1.5 |
+| bloom | `BLOOM_NUM_LEVELS`, 3x3 gaussian, `PRECISION` | 1 |
+| after image | `AFTER_IMAGE`, `SHAPE_AFTERIMAGE_*` | 1 |
+| anamorphic glare | `ANAMORPHIC` | 1 |
+| library-shape ghost | `USE_CUSTOM_SHAPE` 0 with ghost, `SHAPE_GHOST_DISTORTION/SHARPENESS`, `GHOST_CONCENTRIC_DISTORTION` 0 | 1-2 |
+| star | `STAR_LENGTH_FOV_DEPENDENCE`, `SHAPE_STAR_(FORCE_)DISPERSION` | 1 |
+| glare threshold 0 | `THRESHOLD` 0 | 0.25 |
+| auto exposure | `DELAY`, `INFLUENCED_BY_GLARE` | 1 |
+| colour temperature | `COLOR_TEMP`/`WHITE_BALANCE` < 4000 K | 0.25 |
+| chromatic aberration off | `CHROMATIC_ABERRATION ENABLED` 0, shimmer without CA | 0.5 |
+| vignetting | `FOV_DEPENDENCE` | 0.25 |
+| DOF | `APERTURE_PARAMETER`, `FRONT/BACK_LEVELS_NUMBER`, shapes 0/1/5+, `EDGE_QUALITY` | 2 |
+| airy disc | `[AIRYDISC]` | 1 |
+| feedback | `[FEEDBACK]` | 1 |
+| lens distortion | `[LENSDISTORTION]` | 1 |
+| tone-map viewport | `SCALE_WIDTH/HEIGHT`, `OFFSET_X/Y` | 0.5 |
+
+About 14-16 sessions in all, against the prompt's ~2 for the whole task.
+
+# Task Y7e: the natural and photographic DOF shapes, video.ini saturation, the sweep in --full
+
+## Resume here
+
+- **Done, released as v0.49.3.** Every shipped filter now runs at every setting: the sweep's filter
+  part is 10 of 10 IDENTICAL. Nothing is left from this task.
+- **Next:** custom-filter keys no shipped filter uses (Task Y7b).
+
+## Step 1: DOF APERTURE_SHAPE 2 and 4 (`3eb3286`)
+
+The game's code (not logs): `CPostEffect::Initialize` 0x1403bbb80 takes the filter's `APERTURE_SHAPE`
+into `CDepthOfField+0xd4`, copied into every DOF level (+0x10) at creation.
+
+- `DOFLEVELPARAM::SetApertureFilterDiameter` 0x14041e5f0: filter size n = table[shape*5 + radius]
+  (shape 2 `[3,5,9,15]`, shape 4 `[3,5,9,17]`); width +0x1c = `(int)(sqrtf(2)*n)` for shape 2, n for
+  shape 4. `DOFLEVELPARAM::Initialize` 0x14041e420: work textures 1 (shape 2), 4 or 0 (shape 4, n>=4),
+  the doubled-size extra for shape 4 only above n 8.
+- `ApplyApertureFilter` 0x140425340: shape 2 = `SquareRotatedFilterMax15x15_2Pass` (n 5, 15) or
+  `SquareRotatedFilter3nx3n_2nPass` 0x140403890 (`logf(n)/logf(3)` iterations), angle = the diaphragm
+  angle alone; shape 4 = `HexagonFilter_Rhombic` 0x140404a90 (one draw of 7 or 19 taps for n 3/5; for
+  n 9 three rhombi through work 3 and a `MadTn` of four sources), angle + pi/6. Shapes 2/4 composite
+  like shape 3 (0x140428da0: only shape 1 has 1.95/0.9).
+- The driver 0x140425f60's front blur goes into the last work texture (not work 0, the filters' own
+  temp). `MadT1_S19` joins the program list (19-tap rhombus).
+- Two traps the rows caught: the rhombic line taps are `k * (step * texel)` in machine order
+  (0x140405608..0x14040567c; the pseudo-C reads `(k*step)*texel`, one bit off at 1600x900), and
+  `CTextureUtil::MadTn` 0x140400be0 sets every source to address mode 1 (clamp) and point/linear by
+  size itself, so the four sources read through the point clamp sampler, not their saved modes.
+- Shape 3 code is unchanged.
+
+## Step 2: video.ini [SATURATION] LEVEL (`3411d65`)
+
+`Sim::Sim` 0x140192070 (movss at 0x1401927da): with a `[SATURATION]` section, `LEVEL * 0.01f` into
+GraphicsManager+0x11c, the lighting's saturation. Its readers: the lighting cbuffer at 0x90
+(`updateLightingSetttings` 0x140205190) and `updateYebisParameters` 0x140029e30 (saturation = +0x11c
+times the filter's `[COLOR] SATURATION`). rustyac.exe now reads it from the player's video.ini; YEBIS's
+`Camera` carries it like the exposure multiplier. The render oracle's game side gets the same store
+(it runs Sim::Sim's pieces by hand) and `RENDER_ORACLE_SATURATION` / the `SATURATION:<n>` row key.
+Not ported: numpad + (`Sim::onKeyDown` 0x14019a940 adds 0.01 up to 2.0, "Saturation: N%"); the
+browser page.
+
+## Step 3: the sweep in --full (`4c95453`)
+
+`yebis_sweep` is an area of `run_all.sh`, in the render-oracle lane after `python`, dropped unless the
+mode is `--full` (or the area is named). Its cases count in the table like any area's. It adds about
+1h27m (Y7d's full sweep, 528 cases) to the render lane, so about that much to a `--full` run's wall clock.
+
+## Step 4: proofs
+
+| check | result |
+|---|---|
+| sweep filter cases (`SWEEP_ONLY='f_.*'`) | 10 of 10 IDENTICAL |
+| new rows `ry7e_01`..`_11` | 11 of 11 IDENTICAL |
+| every render post row (`RENDER_ONLY='r23_.*\|ry.*'`) | 141 of 141 IDENTICAL (track overlays included) |
+| `run_all.sh --quick` | 174 of 174 IDENTICAL, 0 ERROR, 0 skipped, 0h54m |
+| clippy native, wasm32-unknown-unknown, wasm32-wasip1, render wgpu, web | clean |
+| `render_oracle` clippy | the same 42 old lints as Y7c/Y7d, none on a changed line |
+| `cargo test -p rustyac-render --lib yebis` | 14 passed |
+
+The full sweep was not run again (only its 10 filter cases); the exhaustive and pairwise parts were
+IDENTICAL in Y7d and shape 3's code did not change.
+
+Disk: C: 30 GB free at the start, 27 GB at the end. RAM 18 GB free at both.
+
+---
+
+# Task Y7d: the YEBIS settings sweep, its fixes, post-processing in the presets
+
+## Resume here
+
+- **Done:** step 1's sweep (`278ab08`, `tools/proofs/yebis_sweep.sh`), five fixes from it (`e7bc4ce`,
+  `b499962`, `2c3a865`, `7968dc1`, `ac4bf9f`, rows `ry7d_01`..`_05`).- **Full sweep on the fixed build** (`re/scratch/taskY7d/run2`, 1 h 27 min): 528 cases, 526 IDENTICAL.
+  Exhaustive 432 of 432, pairwise 86 of 86, filters 8 of 10: `f_natural` and `f_photographic` are
+  finding 6 (APERTURE_SHAPE, refused, Task Y7e).
+- **Step 2's rerun** of every render `--post` row on that build (`RENDER_ONLY='r23_.*|ry.*' bash
+  tools/proofs/render.sh`): 115 of 115 IDENTICAL, rows `ry7d_01`..`_05` among them (the 2 h limit cut
+  the track-overlays loop after 6 tracks, all IDENTICAL; they are not post-processing).
+- **Step 3** (`cd1e129`, `29bf13a`): `--graphics max` writes `[POST_PROCESS] ENABLED=1 FXAA=1 QUALITY=5
+  GLARE=5 DOF=5 RAYS_OF_GOD=1 HEAT_SHIMMER=1 FILTER=default`, AC's highest (AC's launcher has no video
+  presets; its shipped `cfg/video.ini` is the page's "high"). `low` keeps post-processing off. The
+  "until YEBIS is ported" notes are gone from `--help`, the startup notes, README and the graphics page
+  (the page itself stays without YEBIS). The cube map stays 1024 (Task 22c).
+- **Step 4:** `re/scratch/taskY7d/shot/y7d_max.jpg` (960x540, 119 KB) from `rustyac.exe --track spa
+  --no-race-ini --autodrive --at 55 --sun 70 --no-hud --graphics max --width 1280 --height 720
+  --screenshot`: the low sun ahead left with glare and light shafts.
+- **Step 5:** clippy native, both wasm targets, wgpu and web all clean; `render_oracle`'s own clippy has
+  the same 42 old lints as Y7c (no file of it changed here). `run_all.sh --quick` 174 of 174 IDENTICAL,
+  0 ERROR, 0h42m. Released as v0.49.2 (Y7a, Y7c, Y7d).
+- **Left for Task Y7e:** DOF `APERTURE_SHAPE` 2 and 4 (finding 6: natural, photographic); video.ini
+  `[SATURATION] LEVEL` (Sim::Sim 0x140192070 stores LEVEL*0.01 at renderer+0x11c; nothing on desktop
+  reads it yet). Custom-filter keys no shipped filter uses stay Task Y7b.
+
+## The sweep (step 1)
+
+- `tools/proofs/yebis_sweep.py` writes the rows, `yebis_sweep.sh` runs them like `render.sh` (call log and
+  pixels, game against port on WARP) and keeps only a failing case's pictures (`<out>/fail/<case>`).
+- **Exhaustive (`x_*`):** PP_QUALITY 0-5 x GLARE 0-5 x DOF 0-5 x RAYS_OF_GOD 0/1 at 1280x720, default
+  filter, the sun in view (`--view sun`), focus 5 m. That is 6 x 6 x 6 x 2 = 432, not the plan's 360:
+  AC's Video tab has six post-processing qualities (0 "Very Low" to 5 "Ultra"), not five.
+- **Pairwise (`p1127x633_*`, `p1920x1080_*`):** 43 rows a size covering every pair of PP 0-5, glare 0-5,
+  DOF 0-5, shafts, heat shimmer, FXAA, AA 1/2/4 and triple screens (a greedy all-pairs list, asserted
+  complete in the script).
+- **Filters (`f_*`):** each of AC's ten `system/cfg/ppfilters` once at PP 5, glare 5, DOF 5, shafts, heat
+  shimmer, FXAA, AA 4.
+
+## What the sweep found (from the game's code)
+
+1. **DOF `EDGE_QUALITY`** (`e7bc4ce`, row `ry7d_01`). Y6 said no shipped filter has other than 3; b&w,
+   movie and natural have 1, photographic and vintage 2, so the port refused them with DOF on. AC hands
+   it to `CPostEffect::SetDepthOfFieldEdgeQuality` 0x1403cadd0 every frame: 0x1403cc0a0 maps 0-4 to the
+   flags 0, 0, 2, 6, 6 (-1 the table's, `this[200]`: 0 at DOF 1, 6 at DOF 5, 2 otherwise), and they are
+   set (+0x140) only when the table's flags hold them all. Flag 4 is the front layer, 2 its blur factor.
+   The port also drew the front layer's hexagon whenever its targets existed; now only with flag 4.
+2. **Shafts with the glare off** (`b499962`, row `ry7d_02`). With GLARE 0 AC never calls
+   `SetGlareParameters`, so +0x66c keeps `Initialize`'s 1.0 and `UpdateParameters_DepthOfFieldOpticalParameters`
+   0x1403b92f0 still turns +0x9ac on: the depth range in the cbuffer (+0x9a0, +0xba0) is the shafts' one.
+   The port took the glare's luminance and had none. Draws and pixels were the same; the call log was not.
+3. **DOF with no level in range** (`2c3a865`, row `ry7d_03`). At PP quality 1 the levels are small enough
+   that none is in range at 5 m; `ApplyDepthOfField` 0x140430ed0 has no special case: the halvings, then
+   the composite reads the source alone. The port refused.
+4. **Glare levels under 4 texels** (`7968dc1`, row `ry7d_04`). PP quality 1 at glare 4-5: the port refused
+   a 4x3 level. `CRenderGlare::CreateSystemObjects` 0x140413c00 makes a side `(w * scale + 0.99)` under 4
+   into 3.
+5. **Triple screens with the shafts** (`ac4bf9f`, row `ry7d_05`). `CameraTripleScreen`'s
+   `evOnPostYebisParametersUpdate` handler 0x140224dc0 writes 1.0 to `godraysLength` (pp+0x614) and 0 to
+   `vignetteStrength`; the port had only the vignette. The radial passes' weights went 0.985 a tap instead
+   of 0.846, and five passes instead of three.
+6. **DOF `APERTURE_SHAPE`** (not fixed, Task Y7e). natural has 2, photographic 4 (others 3). AC passes it
+   at init (`m_eApertureShape`); `ApplyDepthOfField_ApertureFilterLevel_EAPERTUREFM_DISC_ApplyApertureFilter`
+   0x140425340 switches on it: 2 `SquareRotatedFilterMax15x15_2Pass` / `SquareRotatedFilter3nx3n_2nPass`,
+   3 `HexagonFilter_nPass` (ported), 4 `HexagonFilter_Rhombic`. New kernels and programs; the port keeps
+   refusing them with DOF on ("yebis: [DOF] APERTURE_SHAPE other than 3 not ported").
+
+# Task Y7c: DOF at big sizes, with the shafts and the shimmer; the resize failure was the oracle's (no release)
+
+## Resume here
+
+- **Done: steps 1 and 2, step 3's question, gap 2, committed** (`90e855b`, `a950452`, `7cf5665`,
+  `fbb0075`, `cd16579` and the RAYS fix after them). No release (v0.49.2 comes with Y7d).
+- **Gap 2 fixed** (`fbb0075`): `this[0xf4]` is the light-shafts flag, not "DOF on". It is bit 28 of
+  CPostEffect+0x1dc (`CPostEffect::Initialize` 0x1403bbb80 lines 698 and 1578), and only
+  `CameraForwardYebis::initPostProcessing` sets it, from `godraysEnabled`. With DOF on, the glare's pool
+  halvings (+0x258, `CreateSystemObjects` lines 255-300) use +0xc4 (R16G16B16A16) only with the shafts and
+  +0xbc otherwise. Rows `ry7c_09`..`_11` cover DOF + glare with the shafts off. The flag is RAYS_OF_GOD
+  alone, even at glare quality 0 where no shaft is drawn: step 4 caught `ry6_11`, `ry6_12` and `ry7a_04`
+  (GLARE 0, RAYS 1, DOF, resize), whose rebuilt pool is R16G16B16A16, so the port keys the pool on `rays`.
+- **Gap 1 fixed (third session, `28769ac`, rows in `bd44344`):** the glare's objects are made, cleared and
+  released as `CRenderGlare::CreateSystemObjects` makes them; the draws are unchanged. Rows `ry7c_12`..`_15`.
+  See "Gap 1: the glare's objects (from code)" below.
+- **Step 3 done; Y7c done** (no release, no tag; v0.49.2 is Y7d). `run_all.sh --quick` 174 of 174
+  IDENTICAL. The full render `--post` / glare / DOF sweep (125 rows with overlays) found 3 call-log
+  differences (`ry6_11`, `ry6_12`, `ry7a_04`), fixed in the shafts' pair commit below; all 125 are now IDENTICAL.
+
+## Gap 1: the glare's objects (from code)
+
+- **The bright pass (+0x248)** is one `CRenderTextureArray::Initialize` (`CreateSystemObjects` 0x140413c00,
+  lines 440-530) of 3 entries, 4 when `this+0xe0 > 0`: e0 and e2 in fVar37 = `this[0xf4]` ? +0xc4
+  (R16G16B16A16) : +0xbc (R11G11B10), e1 only with `this[0xf6]` (never in AC), and e3 in +0xbc. `this[0xf4]`
+  is RAYS_OF_GOD, so with the shafts the game makes f9, f9, f26, and without them f26 x3. No DOF in it.
+  The port made f9, f26, f9 (and f9, f9 with DOF on) because one slot list served as both the game's
+  objects and the draws' targets. Now the port makes e0, e2, e3 in the game's order and swaps e2 and e3
+  for the draws (the bright pass draws into e2, the star's mad into e3). The `shortcut:` marker is gone.
+- **The port's `dof_glare` pair is gone.** The "two lone 240x135 f26 clears before the bright pass's
+  group" with DOF on are not DOF objects. They are the shafts' mask (+0x2d8) and result (+0x2e0), which
+  `ClearAllGPUResources` 0x14041c400 clears alone after the ghost's pair and before +0x270 and +0x248.
+  Those rows had RAYS on. The port's old positional groups happened to line its DOF pair up there.
+- **The clears follow `ClearAllGPUResources`**, one group per object: +0x288; the star's ten (+0x280);
+  the ghost's pair (+0x298); +0x2d8; +0x2e0; +0x270; +0x248 (e0, e2, e3); +0x2b8; +0x2c0; the double
+  (+0x2d0, only with a result blur); each level's +0x268 array; then the pool's singles (+0x258).
+  The old code cleared e0 alone first and never cleared the shafts' pair.
+- **Why the rebuild does not remake the shafts' 800x450 / 400x225 f9:** they are in the shared texture pool
+  (CTextureUtil+0x21608), and `AllocateTexture(s)` 0x140411900 returns a texture already there with the
+  same size and format. With RAYS on, the glare's halvings (+0x258) are R16G16B16A16, the same as DOF=0's
+  own halvings, so one texture serves both. The port made `half_pool` again at those sizes. That also gave
+  it 2 extra teardown rebinds (one per released texture). Now `half_pool` skips a size the glare's pool
+  already has in that format.
+- **DOF on: the DOF's halvings (+0x458) are asked last.** `CDepthOfField::CreateSystemObjects`
+  0x1404200a0 asks for every level's work targets first (lines ~1240-1300). The port asked for the
+  halvings before the levels. Each size still gets the same textures, so the draws do not change, but
+  the pool's creation and clear order now match the game's (`rs13`).
+- **The shafts' mask and result are made with RAYS at any glare quality.** `CreateSystemObjects` lines
+  357-381 make +0x2d8 / +0x2e0 under `this[0xf4] != 0` alone, and lines 874-897 initialize them whenever
+  they exist. The port made them only at glare quality > 0. At GLARE 0 + RAYS 1 a rebuild makes and clears
+  two 120x68 f26 the port lacked (`ry6_11`, `ry6_12`, `ry7a_04`). The old `dof_glare` pair had stood in
+  for them by chance. Now the pair follows `rays`; the shafts still draw only at glare quality > 0
+  (`yebis_cb.rs` `Glare::shafts`).
+
+## Results
+
+| Case | Frames | Call log | Pixels |
+|---|---|---|---|
+| `ry7c_01` 2560x1440, PP 3, DOF 5 focus 2, F2 (three front levels, `TS3_3`, make-colour S17) | 3 | IDENTICAL | IDENTICAL |
+| `ry7c_02` 643x200, PP 0 (frame-to-level mask S6) | 3 | IDENTICAL | IDENTICAL |
+| `ry7c_03` 643x216, PP 0 (2-tap resample, composite's second rectangle) | 3 | IDENTICAL | IDENTICAL |
+| `ry7c_04` 3840x2160, PP 5 | 3 | IDENTICAL | IDENTICAL |
+| `ry7c_05` triple 5760x1080, PP 3 | 3 | IDENTICAL | IDENTICAL |
+| `ry7c_06` / `_07` DOF with the light shafts on screen (sun view), PP 3 DOF 5 / PP 5 DOF 3 | 3 | IDENTICAL | IDENTICAL |
+| `ry7c_08` DOF 5 with the heat shimmer (spa_launch, `rustyac_heat_x100`) | 52 | IDENTICAL | IDENTICAL |
+| `ry7c_09` / `_10` / `_11` DOF + glare, shafts off (GLARE 3 PP 3 DOF 3, GLARE 3 PP 5 DOF 5, GLARE 5 PP 3 DOF 4) | 10 / 10 / 6 | IDENTICAL | IDENTICAL |
+| DOF 3 + GLARE 3, RAYS 0 (`rs12`, gap 2 fixed in `fbb0075`) | 5 | IDENTICAL | IDENTICAL |
+| `ry7c_12` (`rs7`) DOF 3 + GLARE 3 + shafts, resize 3:1600x900 (before gap 1: call log DIFFERENT) | 5 | IDENTICAL | IDENTICAL |
+| `ry7c_13` (`rs13`) DOF 3 + GLARE 3, shafts off, resize (before: DIFFERENT) | 5 | IDENTICAL | IDENTICAL |
+| `ry7c_14` (`rs14`) GLARE 3 + shafts, no DOF, resize (before: DIFFERENT) | 5 | IDENTICAL | IDENTICAL |
+| `ry7c_15` step 3's row: DOF 3 + GLARE 3 + resize, frames 0 and 2 kept from before the resize | 6 | IDENTICAL | IDENTICAL |
+| Step 4: every render-area `--post` row (`r23_*`, `ry3e_*`, `ry5*`, `ry6_*`, `ry7a_*`, `ry7c_*`) and overlays | | 121 of 121 IDENTICAL (the 50 DOF rows rerun after the RAYS fix) | |
+| Third session step 3: `run_all.sh --quick` (13 areas) | | 174 of 174 IDENTICAL | |
+| Third session step 3: every `--post` / glare / DOF row + overlays (125) | | 122 of 125 before the shafts' pair fix (`ry6_11`, `ry6_12`, `ry7a_04` call log DIFFERENT); after it the 20 GLARE 0 + RAYS rows and `ry7c_*` rerun: IDENTICAL, so 125 of 125 | IDENTICAL (all 125) |
+
+## Step 3: the oracle's, not the game's (from code)
+
+- Y6's "wrong data size, expected 5760000 got 3686400" came from the `png` encoder. `run_side`
+  (tools/render_oracle/src/main.rs) wrote every kept frame of a sequence at `rendered.width/height`, the
+  size after the last frame. A frame kept from before the resize (Y6's `rzg` kept frame 0) holds 1280x720
+  pixels, but its PNG was written at 1600x900. Each `Captured` frame now keeps its own size (`7cf5665`).
+- The game resizes fine. `kglResizeBuffers` 0x1400193d0 calls `ResizeBuffers(0, 0, 0, 0x1c, 2)` and
+  prints "ERROR: swapChain->ResizeBuffers FAILED" when that fails. No run printed it, and the game's
+  frames after the resize are 1600x900. Nothing goes into differences.md.
+
+## What the game does (from its code)
+
+- **Three front levels** take `CompositeMaskedBlurLevels_USNORM_TS3_<near>` (added to the technique
+  table). The composite's second rectangle (`ApplyDepthOfField_Composite` 0x140428da0, lines 460-465)
+  is built from the first texture bound, the farthest front result at its doubled size.
+- **Resample with 1-4 taps** (`CTextureUtil::Resample` 0x1403f6710) uses `MadT1_S<n>` with weight 1/n.
+  A 643x216 frame takes the 2-tap one.
+- **Masks and make-colour drawn**: the frame-to-level mask is S4 or S6 (S6 at 643x200), level to level
+  S4 or S1. Make-colour taps are `2^passes * 2 - 1` (3, 7 or 15), so S5, S13 or S17. S9 is never drawn.
+  Mask S2/S8/S9/S12/S16/S20/S25 are not reached by the halving rule either.
+- **BackgroundBlurFactorNormalize** (`ApplyDepthOfField_Source` 0x1404282e0, lines 347-415) is drawn
+  only for front levels from `this+0x1e4` on. That is the far count, unless flags 0x10 / 0x20 set it to
+  1 / 0, and AC's flags (`this+0x140`: 0, 2 or 6) never have those bits. So AC never draws it.
+- **DOF with the shafts**: draw 0's depth factors are the DOF's (`UpdateParameters_Base` 0x1403b46c0,
+  lines 143-158, calls `UpdateParameters_DepthOfFieldOpticalParameters`). The shafts' reversed range is
+  used only without DOF.
+- **DOF with the heat shimmer**: DOF reads the shimmer's third surface. Its resample (0x1404285a2) sets
+  that texture's mode, and the copy before it is point/clamp because the composite left the first
+  surface clamped. The shimmer's trailing surface switch happens only without DOF.
+
+# Task Y7a: DOF quality 5, doubled levels, DOF with glare at PP_QUALITY 5 (no release)
+
+## Resume here
+
+- **Done: steps 1-4, committed** (`47a66b9`, `9ed0fbf`, `07b0453`). No release (v0.49.2 comes with Y7d).
+- **Next**: Y7c, DOF with the light shafts / heat shimmer (both still refused) and resize with DOF + glare.
+
+## Results
+
+| Case | Frames | Call log | Pixels |
+|---|---|---|---|
+| `ry7a_01` DOF 5, 1280x720, F4 (mask S4, make-colour S5, `TS1_2`) | 3 | IDENTICAL | IDENTICAL |
+| `ry7a_02` DOF 5, 1024x576 (level 0 doubled: front and main up-resampled) | 3 | IDENTICAL | IDENTICAL |
+| `ry7a_03` DOF 5, 1920x1080 (two front levels: make-colour S5 + S13, `TS2_2`) | 3 | IDENTICAL | IDENTICAL |
+| `ry7a_04` DOF 5, resize 3:1600x900 (creation / clear / teardown order) | 6 | IDENTICAL | IDENTICAL |
+| `ry7a_05` DOF 5, default filter | 3 | IDENTICAL | IDENTICAL |
+| `ry7a_06` / `_07` DOF 3, 1024x576, F2, focus 2 / 40 m (doubled level, step 2) | 3 | IDENTICAL | IDENTICAL |
+| `ry7a_08` PP 5, GLARE 3, DOF 3 (a level the size of a glare halving, step 3) | 10 | IDENTICAL | IDENTICAL |
+| `ry7a_09` / `_10` / `_12` PP 5 with GLARE 3 / 5 / 1, DOF 5 / 4 / 5 | 10 | IDENTICAL | IDENTICAL |
+| `ry7a_11` PP 3, GLARE 3, DOF 5 | 10 | IDENTICAL | IDENTICAL |
+| Step 4: every render-area `--post` row (`r23_*`, `ry3e_*`, `ry5*`, `ry6_*`, `ry7a_*`) and overlays | | 110 of 110 IDENTICAL (`ry3e_01` / `ry5_03` after `07b0453`) | |
+| Planted: make-colour threshold 0.001 -> 0.0011 | 3 | DIFFERENT (1 word, +0x21c) | IDENTICAL: caught by the log |
+
+## What the game does (from its code)
+
+- **Front layer** (`ApplyDepthOfField_Source` 0x1404282e0, flags `this+0x140` = 6 at quality 5 only,
+  `SetDepthOfFieldEdgeQuality(3)`): for each of the first `0x1dc` (far) levels a
+  `BackgroundLayerMaskT1_USNORM_S<n>` (0x1404005a0; box taps of `GetTexCoordOffset_Box` with p9 set,
+  sampler mode 5 while drawn; threshold `[DOF] BACKGROUND_MASK_THRESHOLD` at +536) chained from the last
+  halving into the level's +0x48, then `BackgroundLayerMaskMakeColorT1_USNORM_S<5|9|13|17>`
+  (0x140400850; `GetColorWeight_CenterPeak` taps from the level's +0x1c, sampler mode 9; threshold 0.001
+  at +540; Modulate (0.5025, 0, 0, 0)) into +0x50.
+- **Per level** (DISC 0x140425f60): the front hexagon from +0x50 into +0xa8 (or +0x48, then up-resampled
+  into +0xa8 when doubled); the near blend into +0x50; the main hexagon; a doubled level's result
+  up-resampled (`MadT1_S4`, spread `+0x2c * 0.25 + 0.25`, source set to linear clamp first).
+- **Composite** `CompositeMaskedBlurLevels_USNORM_TS<far>_<near>` (0x1403f3510): the frame, front
+  results far-1..0 (factors +0xd0), main results 0..near-1 (+0xd8), Modulate (1.99, 1) (1.95 / 0.9
+  for aperture type 1).
+- **Textures**: per level +0xa0, +0x48, +0x50, +0xa8 (an alias of +0x48 when the sizes match)
+  in `CreateDeviceResources` order; clears +0xa0, +0xa8, +0x48, +0x50, +0x50. The TextureUtil pool
+  (0x140411900) makes textures in ask order, only the missing count per ask; at quality 5 no extra
+  work texture (`DOFLEVELPARAM::Initialize`: only edge 2 without 4).
+- **Step 3**: with PP_QUALITY 5 and glare, a DOF level and a glare halving of one size get the same
+  pool texture; the glare's next halving / bright pass then reads it at the sampler mode the DOF left
+  (`20 2 2`, not border). The port now reads the halving's saved mode.
+
+## A Task Y6 bug found by step 4
+
+- Y6 changed the aberration's `current = 1` to `current ^= 1` (for the DOF composite in e1). After the
+  heat shimmer `current` is 2, so it became 3 and `ry3e_01` / `ry5_03` panicked (index out of
+  bounds). Now e1 without DOF, e0 with it (`07b0453`). v0.49.1 shipped with this bug.
+
+## Not done
+
+- More than two front levels (refused; not reached at 1024x576 to 1920x1080 at quality 5).
+- Mask variants other than S4, make-colour S9 / S17: their code is ported (tap rule tested in
+  `box_taps_follow_the_game`), but no window size tried draws them, so no row proves them.
+- DOF with light shafts or heat shimmer, resize with DOF + glare (Y7c).
+- `BackgroundBlurFactorNormalize` (make-colour loop for levels past `0x1e4`): not drawn at these settings.
+
+# Task Y7: YEBIS for every video setting (stopped before step 1, no release)
+
+## Resume here
+
+- **Stopped before step 1 (rule 32): the task is several times the 1.5-2 sessions its prompt gives.**
+  Nothing in the port changed. Estimate, from the game's code and one game-side run:
+
+  | Step | Work | Estimate |
+  |---|---|---|
+  | 1 DOF quality 5 | the front layer: 3 new `CTextureUtil` draws with their cbuffers (below), a front-layer hexagon pass, the masked composite, the level's +0x48 / +0x50 textures in the game's creation / clear / teardown order (`CreateSystemObjects` 0x1404200a0 is 1302 lines, 35 front-layer references) | 1-1.5 sessions |
+  | 1 doubled level | `dof_levels` already computes `doubled`; the extra work target, the up-resample (`MadT1_S4`, `T_UP`) into the level's +0xa0 | 0.3 session |
+  | 2 pool allocator | 0x140411900 handing one texture to a DOF level and a glare halving of the same size | 0.5 session |
+  | 3 DOF with shafts / shimmer | texture formats and order; both refused today | 0.5-1 session |
+  | 4 resize with DOF + glare | first: harness or game (`expected 5760000 got 3686400` = 1600x900 vs 1280x720 RGBA8) | 0.5 session |
+  | 5 sweep | the script is small; the run is not: 5 PP qualities x 6 glare x 6 DOF x shafts x shimmer x FXAA = 1440 combinations a window size, ~13 s each = ~5 h a size, ~16 h for three, before any filter other than default | machine time |
+  | 6 presets | small | 0.2 session |
+  | 7 proofs + release | `run_all.sh --quick` 0h46m, clippy | 0.3 session |
+
+  About 4-5 sessions plus ~16 h of oracle time. Suggested split: Y7a = steps 1-2 (DOF complete),
+  Y7c = steps 3-4, Y7d = steps 5-7 with the sweep cut to pairwise coverage (every pair of settings at
+  least once, a few hundred runs) unless Super wants the full cross product.
+- **Next**: step 1, the front layer, from `ApplyDepthOfField_Source` 0x1404282e0 (the `this+0x1dc` /
+  `this+0x1e4` loops calling `DepthOfFieldLayerMask` 0x1404005a0 and `LayerMaskMakeColor` 0x140400850)
+  and `ApplyDepthOfField_Composite` 0x140428da0's `DrawRectGPU_DepthOfFieldCompositeMaskedBlurLevels`
+  branch (decomp line ~511).
+
+## What the game draws at DOF quality 5 (step 1)
+
+- Run `re/scratch/taskY7/q5`: `RENDER_ORACLE_DOF=5,5 F=rustyac_f4 bash re/scratch/taskY7/cmp.sh q5 0 3`
+  (1280x720, GLARE 0; the port refuses, the game side runs). `re/scratch/taskY7/tech.py <name part>`
+  prints each technique's vs / ps FNV hash from acs.exe's container, to name the gpulog's programs.
+- The game's post draws, in order: depth factor; halving 1280x720 to 640x360; level sources 384x216
+  and 192x108 (`MadT1_S1`); `DepthOfField_BackgroundLayerMaskT1_USNORM_S4` (ps 62a3062e, 640x360 to
+  384x216); `DepthOfField_BackgroundLayerMaskMakeColorT1_USNORM_S5` (ps 43623b35, 384x216);
+  `MadT1_S7` hexagon (the front layer's); `DepthOfField_FrontBlurBlendFactor`; `MadT1_S7`; front blur
+  factor and two hexagons at 192x108; `MadT1_S4` (ps 01cf8836) 192x108 to 384x216, the doubled
+  level's up-resample; `DepthOfField_CompositeMaskedBlurLevels_USNORM_TS1_2` (ps 96d1a053) with the
+  frame and three 384x216 levels; then the tone map. No `BackgroundBlurFactorNormalize` at this focus.
+- The container has the mask programs at S1 / S4 / S8 / S12 / S16 taps (with LOGRGB / REINHARD
+  variants) and the make-colour ones at S5 / S9 / S13 / S17: the tap count follows the sizes, so
+  other window sizes draw other programs.
+
+# Task Y6: PP_QUALITY 5 with GLARE 5, a pinned toolchain, then depth of field (v0.49.1)
+
+## Resume here
+
+- **Step 0.1 done**: `rust-toolchain.toml` pins Rust 1.97.0 (clippy, rustfmt, `wasm32-unknown-unknown`,
+  `wasm32-wasip1`); CI reads it.
+- **Step 0.2 done**: PP_QUALITY 5 with GLARE 5 IDENTICAL (rows `ry6_01`, `ry6_02` at 1127x633). Three
+  causes, below. Next: step 1, the depth of field.
+- **Step 1 done (committed)**: YEBIS's depth of field, quality 1-4, as AC drives it: rows `ry6_03` to
+  `ry6_10` IDENTICAL (focus 2 / 5 / 8 / 40 m, F-numbers 12 / 4 / 2, with and without glare). The
+  scene camera carries `dof_factor` / `dof_focus` (+0x1b0 / +0x1b4); rustyac.exe writes them from the
+  track cameras, the F5/F6/F7 shot cameras and the photo app (its exposure multiplier too, into
+  `GraphicsManager`'s), and `--gui-do end` holds END for the photo app's focus pick.
+  `RENDER_ORACLE_DOF=<quality>[,<focus m>]` (render list key `DOF:`) sets video.ini DOF, `ppDof` and the
+  camera's `dofFactor` 1 / `dofFocus` on both sides. Details below ("Depth of field").
+- **Done after it**: a planted change caught (the hexagon's tap angles 60 -> 60.5
+  degrees: `ry6_03`'s call log DIFFERENT in 16 lines; an earlier plant on `dof_level_factors`' 0.25 went
+  unseen because that value reaches no upload). The screenshot (step 4) is taken, below. The DOF
+  rows ran through `render.sh` (`RENDER_ONLY`; it ran the overlay cases too: all IDENTICAL).
+- **Done, third session**: the textures DOF on makes, in the game's order (the `shortcut:` in `yebis.rs`
+  is gone). With DOF on, the glare (`CreateSystemObjects` 0x140413c00, this[0xf4]) makes two R16G16B16A16
+  targets of its size first and two more f26 ones that the bright pass draws into instead (`ry6_09`
+  showed which), each f26 one is cleared alone and the R16G16B16A16 pair leads the bright pass's group; `CDepthOfField::CreateSystemObjects` 0x1404200a0 makes each level size's
+  source once (its pool, this+0x468) and each level's result (+0xa0, at its double's size); every pool
+  ask is R16G16B16A16, so `CRenderTexturePool::AllocateTextures` 0x140411900 makes one set per size for
+  the glare's halvings, DOF's halvings and each level's work targets (min(2, passes - 1) + doubled +
+  1 from quality 2 at the level's size, one at its double's), and DOF=0's pair and the separate halves
+  pool are not made. `ClearAllGPUResources` 0x14042b930 clears DOF's pool sizes, halvings and results;
+  the teardown releases what was made. Resize rows `ry6_11` (quality 3) and `ry6_12` (quality 4)
+  IDENTICAL, quality 1 and 2 also checked by hand (6 frames, IDENTICAL).
+- **Proof run**: `run_all.sh --quick` 173/174 IDENTICAL, 0 ERROR, 0h46m: `ry6_09` DIFFERENT (the
+  bright pass drew into the R16G16B16A16 pair; fixed, above); then the render area again 18/18 and
+  every `ry6` row 12/12 IDENTICAL. Clippy clean on native, both wasm targets and wgpu (render_oracle's
+  42 old errors unchanged). Released as v0.49.1.
+- **The game fails a resize with DOF and glare** (GLARE 3, DOF 3, 1280x720 to 1600x900 or 1024x576):
+  the ac side's frame comes back at the old size ("wrong data size, expected 5760000 got 3686400"), so
+  that case has no row; for Task Y7 with the pool allocator.
+- **VR**: never draws DOF: `YebisPP::updatePP` 0x14002c270 calls `SetDepthOfFieldEnable(false)` every
+  frame; only `CameraForwardYebis::setPostProcessing` 0x140025080 enables it.
+
+## Depth of field (step 1)
+
+- **Who turns it on**: `CameraForwardYebis::setPostProcessing` 0x140025080: with video.ini DOF > 0
+  (`ppDof`) and the camera's `dofFactor` (+0x1b0) not 0, `SetDepthOfFieldParameters` with the camera's
+  `dofFocus` (+0x1b4) and the filter's [DOF] keys. Chase and cockpit cameras leave the factor 0; the
+  track cameras, the shot cameras and photo mode set it. VR never draws it (`YebisPP::updatePP`
+  0x14002c270 calls `SetDepthOfFieldEnable(false)` every frame).
+- **What the port draws** (`yebis.rs` `dof`, `yebis_cb.rs` `Dof`), before each round's chromatic
+  aberration draw: the frame halved down to level 0 (`ApplyDepthOfField_Source` 0x1404282e0), a
+  resample into each drawn level's source when its size differs, per level the front blur blend
+  factor (`DepthOfField_FrontBlurBlendFactor`, levels before the near count, quality 2-4) and the
+  hexagon (`MadT1_S7`, `hexagon_taps`, one pass at level 0, more further down), then the composite
+  (`DepthOfField_CompositeBlurLevelsFrontBlur_USNORM_TS<far>_<near>` or, at quality 1,
+  `..._CompositeBlurredLevels_USNORM_T<n>`) into the other effect surface. The depth factor draw
+  takes the DOF's factor store. The diaphragm's DOF term: `GetDiaphragmRotateAngle` 0x1403bb140 adds it
+  only with a maximum aperture F-number, which AC never sets (the `shortcut:` is gone).
+- **Sampler modes**: textures keep the mode their last sampler gave them (`CTextureUtil::Resample`
+  0x1403f6710 keeps the address, the front blur factor puts its source's mode back, the composite
+  leaves the first surface point/clamp, the tone map gives its first texture its second's mode;
+  `RENDER_ORACLE_SAMPLER_LOG`). The port records each bound texture's mode (`modes`).
+- **Refused** (an error, no post-processing): quality 5 (its front layer), APERTURE_PARAMETER other
+  than 2, APERTURE_SHAPE other than 3, FRONT/BACK levels other than -1, EDGE_QUALITY other than 3 (no
+  shipped filter has them), a doubled level drawn (focus and window size; 1024x576 at quality 3), a
+  level of a glare halving's size (PP_QUALITY 5: the pool hands both the same texture), the light
+  shafts on screen, the heat shimmer.
+- Rows (`cmp.sh` runs in `re/scratch/taskY6`, then `render.sh`): `ry6_03` (quality 3, 5 m, F12),
+  `ry6_04` (3, 2 m, F2), `ry6_05` (2, 5 m, F4), `ry6_06` (1, 5 m, F4), `ry6_07` (4, 5 m, F4),
+  `ry6_08` (3, 40 m, F2), all 3 frames without glare; `ry6_09` (3, 5 m) and `ry6_10` (3, 8 m, F4),
+  40 frames with GLARE 3. The `rustyac_f4` / `rustyac_f2` test filters are default.ini with
+  APERTURE_F_NUMBER 4 / 2.
+
+## Screenshot (step 4)
+
+- `re/scratch/taskY6/shot/y6_photo_dof.jpg` (1280x720, 216 KB, from a 1920x1080 window's F8
+  screenshot): `rustyac.exe --track spa --car ks_ferrari_f2004 --no-race-ini --dev-apps --cfg-dir
+  <shot>/cfg --video-ini <shot>/video_dof.ini --gui-do "show:photomode;click:72:321;click:72:321;
+  click:72:321;click:72:321;click:160:142;end;frame;frame;frame;frame;screenshot" --duration 25` (the
+  photo app at (20, 80): DOF factor + four times = 0.2, Start, END held: focus 4.35 m on the car; the
+  user's video.ini with DOF=3, RAYS_OF_GOD=0, default filter, F-number 12). `--gui-do frame` (new)
+  lets END's pick happen before F8.
+- Against the same shot with the factor left 0 (`y6_photo_nodof.jpg`): the stands and trees far
+  ahead differ by 1.9 on average (up to 71), the car by 0.39: the background is soft, the car sharp.
+  At F12 the blur is mild, as in the game.
+
+## Step 0.2: PP_QUALITY 5 with GLARE 5
+
+- **No result blur** (`GLAREPARAM::FillDefaults` 0x1404131e0, the first call of
+  `CRenderGlare::CreateSystemObjects` 0x140413c00): the max width (+0x1c; AC passes 0, so half the
+  frame) at or below the glare's width (+0xc) sets the result blur (+0x18) to 0, so the double
+  (+0x2d0) is never made and the composite's resample never runs. Only PP_QUALITY 5 with GLARE 5
+  gets there (glare 640 at 1280: 640 <= 640). Seen at run time with temporary hooks on
+  `CRenderGlare::Initialize` 0x14041c290 (blur 1 handed in) and `GenerateGlare_Composite` 0x14041afb0
+  (+0xb4 = 0, +0x32c = 0, +0x2d0 null). The port: `blur` off when `dw <= ga`, and the composite
+  returns the glare target when the double is no wider.
+- **The bright pass's sampler**: there the glare is more than half the frame, so
+  `GenerateGlare_Source` 0x1404160f0 makes no halving and the bright pass reads the frame itself,
+  at the frame's address mode (clamp after a tone map), not border (`RENDER_ORACLE_SAMPLER_LOG`: no
+  `Resample` from 0x14041623a at GLARE 5). The port keeps the frame's sampler when no halving ran.
+- **Odd sizes** (row `ry6_02`, 1127x633: glare 564x317, levels 282x159, 141x80, 71x40; 1279x719 has
+  every size exact in f32 and proves nothing): `w * (1/w)` is 0.99999994 for 282 and 564, which
+  shows in three places, all now as the game does them:
+  - the ghost's second pass's centre from its own source (Y5d's port, unproven until now: planted
+    back to the first pass's rectangle, call log DIFFERENT, centres 0.5 / 0.49999997);
+  - the ghost's quad positions: `DrawRectGPU_GetVerticesAndTexCoords` 0x1403e5ce0's
+    `(x - size/2) * (2/size)`, so 0.99999994 at 564 wide (the port had a fixed +-1);
+  - the tone map's glare texture rectangle: the glare result's `src_rect`, not 0..1.
+- Checks: `cmp.sh`-style runs in `re/scratch/taskY5d` (`gh_g5`, 12 frames from 480: IDENTICAL;
+  `y6_g5`, `y6_odd`: 40 frames from 3590), then every `--post` row (see the proof run below).
+
+## Results
+
+| Case | Frames | Call log | Pixels |
+|---|---|---|---|
+| `ry6_01` PP_QUALITY 5, GLARE 5 | 40 | IDENTICAL | IDENTICAL |
+| `ry6_02` the same at 1127x633 | 40 | IDENTICAL | IDENTICAL |
+| `ry6_03` DOF 3, 5 m, F12 | 3 | IDENTICAL | IDENTICAL |
+| `ry6_04` DOF 3, 2 m, F2 | 3 | IDENTICAL | IDENTICAL |
+| `ry6_05` DOF 2, 5 m, F4 | 3 | IDENTICAL | IDENTICAL |
+| `ry6_06` DOF 1, 5 m, F4 | 3 | IDENTICAL | IDENTICAL |
+| `ry6_07` DOF 4, 5 m, F4 | 3 | IDENTICAL | IDENTICAL |
+| `ry6_08` DOF 3, 40 m, F2 | 3 | IDENTICAL | IDENTICAL |
+| `ry6_09` DOF 3, 5 m, GLARE 3 | 40 | IDENTICAL | IDENTICAL |
+| `ry6_10` DOF 3, 8 m, F4, GLARE 3 | 40 | IDENTICAL | IDENTICAL |
+| `ry6_11` DOF 3, resize 1280x720 to 1600x900 | 6 | IDENTICAL | IDENTICAL |
+| `ry6_12` DOF 4, F4, the same resize | 6 | IDENTICAL | IDENTICAL |
+| DOF 1 / 2 with the resize (by hand) | 6 each | IDENTICAL | IDENTICAL |
+| planted change (hexagon 60.5 degrees) on `ry6_03` | 3 | DIFFERENT (caught) | - |
+| photo mode (`app_photo` GUI row, unchanged) | - | IDENTICAL | IDENTICAL |
+
+## What Y7 needs
+
+- DOF quality 5 (its front layer) and the doubled level drawn (1024x576 at quality 3).
+- The pool allocator 0x140411900 for DOF with PP_QUALITY 5 and glare (a level of a glare halving's
+  size), and the game's failed resize with DOF and glare (above).
+- DOF with the light shafts or the heat shimmer on screen.
+- The other DOF keys no shipped filter uses (APERTURE_PARAMETER, APERTURE_SHAPE, FRONT/BACK levels,
+  EDGE_QUALITY).
+- From Y5d's refused list: `BLOOM_NUM_LEVELS`, `PRECISION`, `AFTER_IMAGE`, `ANAMORPHIC`,
+  `[TONEMAPPING] FUNCTION` 0 and 3-8, a library shape's ghost (`USE_CUSTOM_SHAPE=0` with `GHOST=1`),
+  `STAR_LENGTH_FOV_DEPENDENCE` other than 0, the 3x3 bloom gaussian.
+
+## Not done
+
+- The rows above other than these: DOF with the shafts / with GLARE and a resize (the game fails it).
+- The DOF-on clear order without the ghost, and DOF on with the light shafts' formats: written from
+  the code, no row (no shipped filter turns the ghost off; the shafts with DOF are refused).
+
+## Open questions
+
+- Why the game's resize fails with DOF and glare on together (the frame stays the old size).
+
+# Task Y5d: YEBIS's light shafts, vintage and the refused glare cases (v0.49.0)
+
+## Resume here
+
+- **Step 1 done**: the light shafts (`[POST_PROCESS] RAYS_OF_GOD=1`, the ppfilter's `[GODRAYS]`)
+  are ported and proven IDENTICAL (call log and pixels) with every shipped filter but vintage, the
+  glare on, over a chase run where the sun comes into view at frame 10 and leaves it at frame 167.
+- **Step 2 done**: vintage IDENTICAL (row `ry5d_10`, same run, light shafts on).
+- **Step 3 done**: the glare and light shafts in VR, the glare without eye adaptation, star streak
+  counts 1, 5 and 12, and `BLUR` are ported and IDENTICAL (rows `ry5d_11`..`18`); the ghost's
+  second pass reads its own source's rectangle now. See "Refused glare cases (step 3)".
+- **Step 4 done**: screenshot `re/scratch/taskY5d/shot/y5d_shafts.jpg` (see "Screenshot (step 4)").
+- **Step 5 done**: every glare row (41: `ry3e_02`..`05`, `ry5a`, `ry5b`, `ry5c`, `ry5d`) IDENTICAL;
+  `run_all.sh --quick` 172/172 IDENTICAL, 0 ERROR, 0h46m. Released as v0.49.0.
+- **Next: Task Y6** (above): PP_QUALITY 5 with GLARE 5 (done in Y6 step 0.2), then the depth of
+  field; the keys left for Y7 are listed in step 3.
+- Proof rows `ry5d_01`..`09` in `tools/proofs/render_list.txt` (default, default_bright, default_dark,
+  blue_steel, natural, photographic, movie, sepia, b&w; tape from 3590, 175 frames, GLARE 3,
+  QUALITY 3, `RAYS:1`, a new `render.sh` key). `ry5d_01` is in the quick list.
+
+## What the port does now (`yebis.rs` `shafts`, `yebis_cb.rs` `Shafts`, `post.rs` `godrays`)
+
+All from the game's code, checked against its call logs:
+
+- **Where the sun is** (`CameraForwardYebis::updateYebisParameters` 0x140029e30): the sun's colour
+  between its low and high colours by its height, normalised; the shafts are on only when the sun is
+  in front of the camera (the dot product of the camera's forward axis and the light, not a frustum
+  test); its screen position through `createLookAt` and the camera's projection.
+  `setPostProcessing` 0x140025080 hands it to YEBIS with the `[GODRAYS]` keys.
+- **When they draw** (`UpdateParameters_EffectiveLightShaftEnable` 0x1403ba270, CPostEffect+0x9ac):
+  shafts on, no depth of field, the glare's LUMINANCE above 0, a colour above 0.
+- **The depth range turns round** with them on (`UpdateParameters_DepthOfFieldOpticalParameters`
+  0x1403b92f0: AC never calls `SetDepthFactorRange`, so the range the shafts force is far to near);
+  the depth-of-field blur factor draw keeps CDepthOfField's own near-to-far range.
+- **The mask** (`CTextureUtil::LightShaftMask` 0x140401d90, `DrawRectGPU_LightShaftMask` 0x1403f5460):
+  bright pass, depth threshold and noise into a 128x64 (quality 3) target, the sun's rectangle
+  from ANGLE_ATTENUATION and the FOV.
+- **The radial passes** (`GenerateGlare_LightShaft` 0x14041a5d0): `TexCoordMadT1_S1..S4`, each four
+  times longer, the pass count from LENGTH and `GetLightShaftRadiusScale` (the star radius with its FOV
+  term), the weights from the game's **vector** `powf` (`__vdecl_powf4` -> `__sse2_powf4`
+  0x140450650), which is not the scalar one: photographic and movie were 1 ulp off with
+  MSVCR120's `powf`. `rustyac_math::powf4_half` is that function for a base of 0.5 (the only use),
+  with its 2^(j/2048) table copied bit for bit (`powf4_table.rs`); unit test
+  `powf4_half_matches_the_game`. The last pass is coloured and scaled by
+  `GetLightShaftCompositeLuminanceScale` 0x14041bdf0 times 4.
+- **The diffraction ring** (`Corona`, `DrawRectGPU_Corona`) when DIFFRACTION_RING != 0, then the
+  composite gains a fourth input (`MadT4`).
+- New targets: the mask and the ring's result after the star and ghost group, the glare's first
+  and third targets in the mask's format.
+- Game-side fix in `tools/render_oracle/src/ac.rs`: the oracle never wrote video settings'
+  `ppRaysOfGod` (+0x3b), so the game never turned the shafts on whatever video.ini said.
+- `rustyac.exe`'s post-processing note and `--post` help say the light shafts are drawn.
+- Planted change (the mask's noise scale 256 -> 257): caught in the call log in frames 10 to 19
+  of a 20-frame run, exactly the frames with the sun in view.
+
+## Results
+
+| filter | row | frames | call log | pixels |
+|---|---|---|---|---|
+| default | ry5d_01 | 175 | IDENTICAL | IDENTICAL |
+| default_bright | ry5d_02 | 175 | IDENTICAL | IDENTICAL |
+| default_dark | ry5d_03 | 175 | IDENTICAL | IDENTICAL |
+| blue_steel | ry5d_04 | 175 | IDENTICAL | IDENTICAL |
+| natural | ry5d_05 | 175 | IDENTICAL | IDENTICAL |
+| photographic | ry5d_06 | 175 | IDENTICAL | IDENTICAL |
+| movie | ry5d_07 | 175 | IDENTICAL | IDENTICAL |
+| sepia | ry5d_08 | 175 | IDENTICAL | IDENTICAL |
+| b&w | ry5d_09 | 175 | IDENTICAL | IDENTICAL |
+| vintage | ry5d_10 | 175 | IDENTICAL | IDENTICAL |
+| default, Vive stand-in, camera at the sun | ry5d_11 | 4 | IDENTICAL | IDENTICAL |
+| default, Oculus stand-in, camera at the sun | ry5d_12 | 4 | IDENTICAL | IDENTICAL |
+| rustyac_aeoff (no eye adaptation) | ry5d_13 | 40 | IDENTICAL | IDENTICAL |
+| rustyac_star1 | ry5d_14 | 40 | IDENTICAL | IDENTICAL |
+| rustyac_star5 | ry5d_15 | 40 | IDENTICAL | IDENTICAL |
+| rustyac_star12 | ry5d_16 | 40 | IDENTICAL | IDENTICAL |
+| rustyac_blur0 | ry5d_17 | 20 | IDENTICAL | IDENTICAL |
+| rustyac_blur05 | ry5d_18 | 20 | IDENTICAL | IDENTICAL |
+
+Also IDENTICAL: the camera looking straight at the sun (`--view sun`, 2 frames).
+
+## Vintage (step 2)
+
+- **The library star** (`USE_CUSTOM_SHAPE=0`, SHAPE 11): `setPostProcessing` hands YEBIS the library
+  glare definition, whose star is the STARDEF table's SunnyCross (8 lines, length 2.4, secondary 1.3,
+  at 0x141521bb0) with a dispersion of -1 (`CGlareDef::Initialize` 0x140412bf0: |p| >= 1 forces
+  the dispersion, stored times 0.36). `GenerateGlare_StarStreaks` 0x140417570 then colours pass p
+  with row 7-p of a table made from `ms_avDispersionColor` (`ms_avDiffractionColor` for a positive
+  dispersion), and, forced, takes one pass fewer, spreads the taps of its last pass 1.5 times wider
+  at the first pass's direction and colours them with the table's own colours.
+  `Star::colours` and the `force` branches in `star()`.
+- **`BRIGHT_PASS=1`**: EFX_BRIGHTPASSTYPE 3, which `GenerateGlare_Source_BrightPass` 0x140415a60 turns
+  into 2 with AC's remap of 1: the `..._THRESHOLD_LUMINANCE_S1` programs, the same constants.
+- **A nine-tap bloom gaussian**: vintage's first bloom level (radius 1.045, cutoff 0.0002) is past
+  the 7x7 and 11x11 filters, so `GaussianFilterMax29x29_2Pass` 0x14040a560 draws it with its own
+  `MadT1_Sn` path: 2n-1 taps (15 at most) of `GetColorWeight15_Gauss15` 0x1403ad710's weights.
+  `gauss_taps` gives 5, 9, 13 or 15 there now (unit test: 1.045 -> 9); the 3x3 still refuses.
+- `STAR_LENGTH_FOV_DEPENDENCE` other than 0 still refuses, now for library shapes too.
+- Planted change (the dispersion factor 1.5 -> 1.51): caught, 48 call-log lines and 17 pixels in
+  every frame of a 4-frame run.
+
+## Screenshot (step 4)
+
+- `re/scratch/taskY5d/shot/y5d_shafts.jpg` (960x540, 118 KB), from `rustyac.exe --track spa
+  --no-race-ini --autodrive --at 55 --sun 70 --no-hud --video-ini
+  re/scratch/taskY5d/shot/video_shafts.ini --screenshot` (the user's video.ini at 1280x720 with
+  ENABLED=1 GLARE=3 QUALITY=3 RAYS_OF_GOD=1, default filter). The sun (`--sun 70`: SUN_ANGLE 70,
+  low in the sky) is just above the horizon ahead and left of the car, 55 s into the autodriven lap.
+- Against the same shot with RAYS_OF_GOD=0, 837,931 pixels differ by up to 61; a second shafts
+  shot is byte-identical to the first. At the default sun the sun is too high for the chase camera.
+
+## Refused glare cases (step 3)
+
+- **The glare without chromatic aberration (VR)**: lifted. Two binding differences the game's VR
+  logs showed, both from the effect surface staying in its first slot without chromatic aberration:
+  the effect surface is not bound again before the glare, and the glare's first halving reads
+  through the clamped sampler after the tone map whichever surface the tone map read (the port
+  only clamped after chromatic aberration). The light shafts in VR take each eye's projection
+  (`YebisPP::updatePPCameraValues` 0x14002bcc0 calls the stereo camera's `getPerspectiveMatrix`,
+  its `projMatrix`): `post::godrays` takes the matrix and projection now. Proven on both headset
+  stand-ins, the camera at the sun (`ry5d_11` `--vr`, `ry5d_12` `--oculus`), and on 8- and
+  20-frame dash runs with the glare alone.
+- One more 1-ulp fix found there: `GetStarRadiusScale` 0x14041baa0 multiplies the width by
+  0.003125 first, then by the FOV term; the Oculus FOV showed it.
+- **The glare without eye adaptation**: lifted; with auto exposure off the effect surface is bound
+  again after the reset only without the glare. Test filter `rustyac_aeoff` (render_oracle writes
+  it: default with `[AUTO_EXPOSURE] ENABLED=0`), `ry5d_13`, 175 frames IDENTICAL in a run.
+- **Star streak counts other than 6**: nothing to change; test filters `rustyac_star1`,
+  `rustyac_star5`, `rustyac_star12` (12 streaks, odd ones half length; YEBIS draws at most 8),
+  `ry5d_14`..`16`.
+- **The ghost's second-pass source size** (was a shortcut): `PointSymmetryT3_S8` 0x1403fef10 takes
+  its centre and rectangle from its first source, the ghost's second target, so `ghost_passes`
+  takes that rectangle too. It differs from the first pass's only when the ghost's first level is
+  past the two full-size levels (ratio 2: the glare more than half the frame wide, only GLARE 5 with
+  PP_QUALITY 5 and an odd width) and `w * (1/w)` is not 1 in f32 for one of the sizes. That case
+  stays unproven: PP_QUALITY 5 with GLARE 5 differs for another reason (below).
+- **BLUR** (the result blur): ported. `CPostEffect::SetGlareResultBlur` 0x1403cb410 caps it at 1;
+  at 0 or under there is no double target (`CreateSystemObjects` 0x140413c00) and no resample.
+  Test filters `rustyac_blur0` / `rustyac_blur05`, `ry5d_17`..`18`.
+- **Left for Y7** (no shipped filter uses any; each changes targets or adds programs):
+  `BLOOM_NUM_LEVELS` (other level counts and their targets), `PRECISION` (other glare target
+  formats), `AFTER_IMAGE` (its own targets and draws every frame), `ANAMORPHIC` (the anamorphic
+  flare's draws), `[TONEMAPPING] FUNCTION` 0 and 3-8 (other tone map programs and constants), a
+  library shape's ghost (`USE_CUSTOM_SHAPE=0` with `GHOST=1`: the library ghost definitions and
+  programs), `STAR_LENGTH_FOV_DEPENDENCE` other than 0, the 3x3 bloom gaussian.
+- **Done in Task Y6 step 0.2**: PP_QUALITY 5 with GLARE 5 (a real video.ini) differed in every
+  frame: the game draws no result-blur resample there. Cause found and fixed in Y6 (no result blur
+  when the max width is at or below the glare's width); see "Step 0.2" at the top.
+
+# Task Y5c: the glare's ghost, and every shipped filter but vintage (no release)
+
+## Resume here
+
+- **Y5c done**: the glare's ghost and every shipped ppfilter except vintage are ported and proven
+  IDENTICAL (call log and pixels) with `[POST_PROCESS] GLARE` on and light shafts off. No release:
+  that comes with Y5d (v0.49.0).
+- **Next: Task Y5d**: the light shafts (game draws 898-899, `RAYS_OF_GOD`), vintage (below), then
+  the release. Afterimage and anamorphic flare stay refused (no shipped filter turns them on).
+- Proof rows `ry5c_01`..`09` in `tools/proofs/render_list.txt` (default, default_bright,
+  default_dark, blue_steel, natural, photographic, movie, sepia, b&w; 12 frames, GLARE 3, QUALITY 3).
+  `ry5c_07` (movie) replaced `ry5b_01` in the quick list (`retired.txt` says why).
+- `run_all.sh --quick`: 171 of 171 IDENTICAL in 13 areas, 0 errors, skips or vanished cases, render 15, 0h52m (`re/scratch/taskY5c/quick.log`). Clippy `-D warnings --all-targets` clean for rustyac-render, rustyac-game clean.
+
+## What the port does now (`crates/rustyac-render/src/yebis.rs` `ghost`, `yebis_cb.rs` `Ghost`, `ghost_passes`)
+
+All from the game's code, checked against its call logs:
+
+- **The ghost** (`GenerateGlare_Ghost` 0x1404185b0): two quad passes after the star,
+  `GlareGhost_PointSymmetryDistScaleT4_S8_TrimT1_S8` (three glare levels and the trim circle into
+  a middle target) then `GlareGhost_PointSymmetryT3_S8` (into the glare's result). Eight ghosts
+  each, centres, scales and colours from the library's ghost table, the diaphragm's turn
+  (shared with the star) and the game's xorshift; luminance
+  `range*0.035*glare_lum*(luminance/mapping_div)*((ghost_lum*0.05)*20)` in that machine order.
+  Unit test `ghost_passes_follow_the_game` holds the exact game values.
+- The ghost's two targets (+0x298) and the trim circle (+0x2a0) exist only with `GHOST` != 0
+  (`CreateSystemObjects` 0x140413c00, `CreateDeviceResources` 0x140415520); the start-up clear
+  groups follow (`ClearAllGPUResources` 0x14041c400).
+- **Colour matrix** in `YebisPP::updatePP` 0x14002c270's order: hue (`GPUMath_ColorMatrixHue`
+  0x1403af0a0), saturation, brightness, contrast, sepia (`GPUMath_ColorMatrixMonotone`
+  0x1403cdc40), COLOR_TEMP, WHITE_BALANCE.
+- **Tone map FUNCTION=1** (PFXTM_LINEARSAT, movie): the `_LINEARSAT` programs; with auto
+  exposure `HDRTMAP_DecodeTonemap` 0x1403dfde0 leaves ids 0/1 unchanged.
+- **GAMMA 0 or 1** (photographic): the tone map's programs without `_Gamma`
+  (`DrawRectGPU_TonemapHDR` 0x1403f1b10: the flag is `gamma != 0 && gamma != 1`).
+- **No vignette** (natural): the bright pass is `BrightPassT1_THRESHOLD_S1` with one texture
+  coordinate set (`GenerateGlare_Source_BrightPass` 0x140415a60).
+- `METERING_*` keys are read by nothing in acs.exe: no longer refused. FUNCTION=0 is refused.
+- The star's luminance is now `...*(0.04*star_lum)` (`GenerateGlare_StarStreaks` 0x140417570's
+  order); sepia's star was 1 ulp off before.
+- Game-side fix in `tools/render_oracle/src/ac.rs`: `PointSymmetryT3_S8` 0x1403fef10 uploads its
+  scalers' `.y` from uninitialised stack; the oracle zeroes the stack before it (see
+  `differences.md`, Repeatability).
+- `rustyac.exe`'s post-processing note and `--post` help no longer say "no glare".
+
+## Results
+
+| filter | row | frames | call log | pixels |
+|---|---|---|---|---|
+| default | ry5c_01 | 12 | IDENTICAL | IDENTICAL |
+| default_bright | ry5c_02 | 12 | IDENTICAL | IDENTICAL |
+| default_dark | ry5c_03 | 12 | IDENTICAL | IDENTICAL |
+| blue_steel | ry5c_04 | 12 | IDENTICAL | IDENTICAL |
+| natural | ry5c_05 | 12 | IDENTICAL | IDENTICAL |
+| photographic | ry5c_06 | 12 | IDENTICAL | IDENTICAL |
+| movie | ry5c_07 | 12 | IDENTICAL | IDENTICAL |
+| sepia (GHOST=0, FOV turn) | ry5c_08 | 12 | IDENTICAL | IDENTICAL |
+| b&w (FOV turn) | ry5c_09 | 12 | IDENTICAL | IDENTICAL |
+| vintage | - | - | refused | refused |
+
+Regression: `ry5a_01`, `ry5b_01` IDENTICAL after the last change.
+
+- **Planted change**: the ghost's second-pass colour 0.004 -> 0.0041 (`yebis_cb.rs`): command log
+  DIFFERENT (one word of `afRGBA_Modulate`, cbuffer +0xa04), pixels IDENTICAL (the ghost is below one 8-bit
+  step in that frame: the call log is what catches it). Reverted.
+- **Screenshot**: `re/scratch/taskY5c/shot/y5c_glare.jpg` (960x540, 113 KB), `rustyac.exe --track
+  spa --no-race-ini --autodrive --at 21.6 --sun 70 --no-hud --video-ini
+  re/scratch/taskY5c/video_glare.ini` (the user's video.ini with ENABLED=1 GLARE=3 QUALITY=3,
+  default filter). Against GLARE=0, 22,741 pixels differ by up to 37. At the default sun
+  (`--at 21.6`, no `--sun`) the two pictures are byte-identical: the glare draws (71 calls on its
+  192x108 targets) but THRESHOLD 15 lets nothing through in that daylight frame.
+
+## What Y5d needs
+
+- **Vintage** (refused: `[GLARE] BRIGHT_PASS other than 0 not ported`): a library-shape star
+  (`USE_CUSTOM_SHAPE=0`) needs `GenerateGlare_StarStreaks`' colour-dispersion path. Its bright pass
+  (BRIGHT_PASS=1) is known but unproven: `SetGlareParameters` 0x1403c2640 stores the mode at
+  CPostEffect+0xb10 and remap +0xb14 (AC passes 1.0); `EndPostEffectScene` maps it through
+  {0->1, 1->3} (EFX_BRIGHTPASSTYPE); `GenerateGlare_Source_BrightPass` turns type 3 with remap 1.0
+  into type 2 (`..._THRESHOLD_LUMINANCE_S1`, same cbuffer as type 1), and threshold 0 into type 0.
+  Type 3 would add `fParam_BrightPassRemapFactor` (c209: 4/r^2-2, 1, 1/r^2, r^2/2). Vintage also has
+  HUE 20, SATURATION 9, WHITE_BALANCE 4500, FUNCTION=1, GHOST=0.
+- Light shafts: draws 898-899.
+
+## Not done
+
+- Vintage (above); afterimage and anamorphic flare (no shipped filter); FUNCTION 0 and 3-8.
+- The ghost's second pass's first source size is assumed to be the glare's size (code comment).
+- Library-shape ghosts, `SHAPE_GHOST_DISTORTION` / `SHARPENESS` != 0 and
+  `GHOST_CONCENTRIC_DISTORTION=0` are refused (no shipped filter uses them).
+
+## Open questions
+
+- Glare with no chromatic aberration (VR) or no auto exposure stays refused; no shipped filter
+  turns them off with the glare on, but VR + glare is untested.
+- Streak counts other than 6 and the diaphragm DOF aperture term (Y5b) are still untested.
+
+# Task Y5b: the glare's star streaks (no release)
+
+## Resume here
+
+- **Y5b done**: YEBIS's star streaks are ported and proven; no release until Y5d (v0.49.0).
+  **Next: Task Y5c**, the ghost, afterimage and anamorphic flare (game draw 897 of the measured
+  frame, `GenerateGlare_Ghost` 0x1404185b0, `_Afterimage` 0x140419fe0, `_AnamorphicFlare` 0x140417510; the anamorphic flare reuses the streak code with its own colours), then Y5d (light shafts, Y5a/Y5b refusals,
+  rows, release).
+- Every shipped ppfilter is still refused with `[POST_PROCESS] GLARE` > 0, now only for the
+  ghost (`yebis: the glare's ghost not ported (Y5c)`). The test filter `rustyac_star`
+  (`render_oracle --ppfilter rustyac_star`, made by `tools/render_oracle/src/root.rs` from the
+  game's `default.ini` with `SHAPE_GHOST_LUMINANCE=0`) is the glare with its bloom and star;
+  `rustyac_bloom` stays.
+- Proof rows `ry5b_01`..`05` in `tools/proofs/render_list.txt`; `ry5b_01` replaced `ry5a_01` in
+  the quick list (render stays 15 cases).
+- `run_all.sh --quick` 171 of 171 IDENTICAL in 13 areas, 0 errors or skips, render 15, 0h42m (`re/scratch/taskY5b/quick.log`; the one "vanished" case is `ry5a_01`, replaced by `ry5b_01`). Clippy `-D warnings --all-targets` clean natively, both wasm targets and wgpu (`re/scratch/taskY5b/clippy.sh`; render_oracle's 42 old clippy errors unchanged). The game's float literals pi/4, pi became `std::f32::consts` (same bits); the rows rerun after: 5 of 5 IDENTICAL (`proof3.log`).
+
+## What the port does now (`crates/rustyac-render/src/yebis.rs` `star`, `yebis_cb.rs` `Star`)
+
+All from the game's code (`re/decomp/GPURenderGlare`, `GPUTextureUtil`, `GPUPostEffect`,
+`CameraForwardYebis`), checked against its call logs (`re/scratch/taskY5b/g3`, decoded by
+`re/scratch/taskY5b/draws.py`; the streak function's body is `re/scratch/taskY5b/streaks.c`):
+
+- The star's settings (`setPostProcessing` 0x140025080 -> `CGlareDef::Initialize` 0x140412d80):
+  with `USE_CUSTOM_SHAPE` the library shape's star (`ms_pGlareLib` +0x1c its `CStarDef` entry,
+  +0x20 its inclination; the STARDEF table at 0x141521bb0: length, odd streaks' length)
+  times SHAPE_STAR_LENGTH / SECONDARY_LENGTH / INCLINATION_ANGLE, SHAPE_STAR_STREAKS_NUMBER
+  streaks (at most CRenderGlare+0xdc, 8), SHAPE_STAR_ROTATION, star luminance x
+  SHAPE_STAR_LUMINANCE. STAR_SOFTNESS (+0x31c: 0.25 when not > 0, `SetGlareStarSoftness`),
+  STAR_FILTER_THRESHOLD (+0x318, clamped to 1e-5..0.9999). The star draws only with a star
+  luminance, streaks, a length, a glare luminance and LUMINANCE.
+- The turn (`GetDiaphragmRotateAngle` 0x1403bb140, `[DIAPHRAGM]`): setPostProcessing sets
+  TYPE / ROTATE_SCALE / ROTATE_OFFSET x 0.017453 only when the scale or the offset isn't 0,
+  otherwise `CPostEffect::Initialize`'s 1 / 1 / 0 (a turn by the field of view: sepia, b&w).
+- Draws (`GenerateGlare_Star` 0x140417200, `GenerateGlare_StarStreaks` 0x140417570), after the
+  levels' sum:
+  - the softened source (MadT3): bright pass x (1-f), level 0's result x f(1-f), level 1's x f^2;
+  - per streak, passes of MadT1_S4 (the last S1..S4): angle inclination - turn - 360/n x i,
+    direction (sin, cos) / glare size, the odd streaks with the secondary length; taps j x
+    direction, weights 0.5^(j a) x (0.1875 first, then k = lum^0.2), a and the direction x4 each
+    pass; passes and the last tap count from the threshold (`log(thr)/log(0.5)/a`, base 4);
+    passes go to the pair of work targets, the last into the streak's own;
+  - the streaks' maximum (MaxColorT2..T8 -> +0x288): weights (1/k)^(passes-1), colour
+    `GetStarCompositeLuminanceScale` x 5.3333335 (CRenderGlare+0xe6 is never set: 0.04);
+  - the composite is MadT2 of the sum and the star (MadT1 without a star).
+- Refused (listed for Y5d/Y7): star dispersion or forced dispersion (the colour tables), a
+  library shape's star (`USE_CUSTOM_SHAPE=0`: every library star has a dispersion; only
+  `vintage.ini`), STAR_LENGTH_FOV_DEPENDENCE other than 0. Every shipped filter has dispersion 0,
+  forced dispersion 0 and FOV dependence 0.
+
+## Results
+
+| case | frames | call log | pixels |
+|---|---|---|---|
+| GLARE=3 QUALITY=3 (`c3`) | 2 | IDENTICAL | IDENTICAL |
+| `ry5b_01` GLARE=3 QUALITY=3 | 12 | IDENTICAL | IDENTICAL |
+| `ry5b_02` GLARE=1 QUALITY=0 | 8 | IDENTICAL | IDENTICAL |
+| `ry5b_03` GLARE=5 QUALITY=3, resize to 1024x576 at frame 3 | 8 | IDENTICAL | IDENTICAL |
+| `ry5b_04` GLARE=1 QUALITY=3, resize to 1024x576 at frame 3 | 8 | IDENTICAL | IDENTICAL |
+| `ry5b_05` GLARE=3 QUALITY=3, FXAA | 8 | IDENTICAL | IDENTICAL |
+| planted: the diaphragm's 2 degree turn left out (`plant`) | 3 | DIFFERENT in all 3 from frame 1 | IDENTICAL (under one 8-bit step) |
+
+(`re/scratch/taskY5b/<case>/out.txt` from `re/scratch/taskY5b/cmp.sh`; the rows:
+`RENDER_ONLY='ry5b_0[1-5]' PROOF_OUT=re/scratch/taskY5b/proof2 sh tools/proofs/render.sh`,
+`re/scratch/taskY5b/proof2.log`.)
+
+## Open questions
+
+- Which of the game's four +0x248 targets the port's `glare[1]` stands for (the logs name
+  textures by size, all equal): the softened source uses it, nothing else draws it.
+- The sepia / b&w turn (by the field of view) and other streak counts than 6 are ported from the
+  code but no row runs them (no shipped filter works before Y5c).
+- The diaphragm's depth of field aperture term is left out (`shortcut:` in `diaphragm_angle`).
+
+# Task Y5a: the glare's bloom and the glare quality levels (no release)
+
+## Resume here (Y5a)
+
+- **Y5a done**: the bloom part of YEBIS's glare is ported and proven; no release until Y5d
+  (v0.49.0). **Next: Task Y5b**, the star streaks and the `GPUGlareDef` shapes (game draws
+  873-896 of the measured frame), then Y5c (ghost, afterimage, anamorphic flare) and Y5d (light
+  shafts, rows, release).
+- Every shipped ppfilter is still refused with `[POST_PROCESS] GLARE` > 0: they all have a
+  ghost and a star (`yebis: the glare's ghost and star not ported (Y5b)`). With GLARE=0 nothing
+  changed. The test filter `rustyac_bloom` (`render_oracle --ppfilter rustyac_bloom`, made by
+  `tools/render_oracle/src/root.rs` from the game's `default.ini` with `SHAPE_GHOST_LUMINANCE=0`
+  and `SHAPE_STAR_LUMINANCE=0`) is the glare with only its bloom.
+- Proof rows `ry5a_01`..`05` in `tools/proofs/render_list.txt` (`ry5a_01` also in the quick list);
+  rows take `GLARE:<n>` and `PP_QUALITY:<n>` like `RESIZE:` (`render.sh` sets `RENDER_ORACLE_*`).
+- Before any work: `run_all.sh --quick` 170 of 170 IDENTICAL, 0 errors or skips, 0h50m
+  (`re/scratch/taskY5/quick.log`). After Y5a: 171 of 171 IDENTICAL (render 15 with `ry5a_01`),
+  0 errors or skips, 0h42m (`re/scratch/taskY5/quick2.log`). The 26 older `--post` rows
+  (`r23_09`..`24`, `ry3e_01`..`05`, `ry5_01`..`05`) and the overlays, run again: 41 of 41
+  IDENTICAL (`re/scratch/taskY5/proof3.txt`). Clippy clean native, both wasm targets and wgpu.
+
+## What the port does now (`crates/rustyac-render/src/yebis.rs` `bloom`, `yebis_cb.rs` `Glare`)
+
+All from the game's code (`re/decomp/GPURenderGlare`, `GPUTextureUtil`, `GPUMath`,
+`CameraForwardYebis`), checked against its call logs:
+
+- Quality: `CameraForwardYebis::initPostProcessing` 0x140024ca0 hands YEBIS
+  `(int)(min(7,5) x GLARE / 5)`; `CPostEffect::Initialize`'s table at 0x141521650 gives the glare
+  target's share of the base width and the bloom's level count, (0.125, 2) .. (1, 9);
+  `GLAREPARAM::FillDefaults` caps the count at `log2(glare width)`. Levels 0 and 1 are at the
+  glare size, each later one halved with its own three targets, the small ones (`w>>4` or the
+  last) with a double they are resampled up to (`glare_levels`).
+- Targets: `CRenderGlare::CreateSystemObjects` 0x140413c00 order (bright pass x3, composite,
+  its double at most half the frame wide, the sum, levels 0/1, each later level, 15 more), the
+  clear pass adds each later level as its own group (`yebis.rs` `Yebis::new`).
+- Draws (`GenerateGlare` 0x14041d470 with no star, ghost, afterimage, light shaft): the frame
+  halved through the glare pool (MadT1_S1), the bright pass (BrightPassT1_Vignette_THRESHOLD_S1:
+  exposure, 1/(64 x GENERATION_RANGE_SCALE), THRESHOLD, the vignette rectangle), per level a
+  two-pass gaussian (MadT1_S7 / S11, `GetColorWeight7_Gauss7` / `11_Gauss11` per channel at
+  615/540/465 nm, tap count from `GetGaussianArray` and BLOOM_FILTER_THRESHOLD), the doubles
+  (MadT1_S4, 2x2 taps at 0.375 texel), the sum (MadLumGammaT3..T7: luminance scale, the
+  diffraction tint from SHAPE_BLOOM_DISPERSION_BASE_LEVEL on, gamma 1/BLOOM_LUMINANCE_GAMMA),
+  a copy and the double at BLUR x 0.5. The tone map reads the double (glare factor 1,
+  PRE_TONEMAP_GLARE), the composite gets LUMINANCE.
+- Rules found by the compares (each a call-log difference first):
+  - the bright pass's exposure is CPostEffect+0x6f4 as the camera set it: GenerateGlare runs
+    before `ApplyEffects_UpdateAutoExposure` (`EndPostEffectScene_InternalProcess` 0x1403b5f40),
+    whose read-back Map comes after the glare's draws;
+  - the frame texture's own sampler mode: Resample keeps its address, which is clamp once a
+    tone map has read it (the Y3e `copy_sampler` mechanism), border on the first frame;
+  - a draw's source rectangle is `size x (1/size) + 0` from the texture (+0x88/+0x8c/+0x90),
+    0.99999994 at 47 or 307 wide (only seen after a resize to 1024x576);
+  - YEBIS makes a program once per number in its container, not per bytecode (MadT1 and MadT1_S1
+    have the same pixel bytecode and two programs).
+- Refused (Y5b and on): ghost or star luminance > 0, GHOST other than 1, AFTER_IMAGE, ANAMORPHIC,
+  BRIGHT_PASS, BLOOM_NUM_LEVELS, BLUR other than 1, PRECISION, THRESHOLD=0, a gaussian that is
+  not the 7- or 11-tap one, the glare without chromatic aberration (VR), without vignette or
+  without auto exposure (orders not measured).
+
+## Results
+
+| case | frames | call log | pixels |
+|---|---|---|---|
+| GLARE=3 QUALITY=3 (`c5`) | 11 | IDENTICAL | IDENTICAL |
+| GLARE=1 QUALITY=3 (`q1`) | 7 | IDENTICAL | IDENTICAL |
+| GLARE=5 QUALITY=3 (`q5`) | 7 | IDENTICAL | IDENTICAL |
+| GLARE=3 QUALITY=0 (`p0`) | 5 | IDENTICAL | IDENTICAL |
+| resize to 1024x576 at frame 3, GLARE=1/3/5 (`rz1`, `rz3`, `rz5`) | 5 each | IDENTICAL | IDENTICAL |
+
+| rows `ry5a_01`..`05` (from frame 0, where YEBIS makes its programs; `05` with FXAA) | 12, 8, 8, 8, 8 | IDENTICAL | IDENTICAL |
+| planted: the diffraction tint 1% stronger (`plant`) | 4 | DIFFERENT in all 4 from frame 0 | DIFFERENT in 1 (2 pixels) |
+
+(`re/scratch/taskY5/<case>/out.txt`, made by `re/scratch/taskY5/cmp.sh`; the rows:
+`RENDER_ONLY='ry5a_0[1-5]' PROOF_OUT=re/scratch/taskY5/proof2 sh tools/proofs/render.sh`.)
+
+# Task Y5: YEBIS's glare and light shafts (and Y3e's leftovers) (stopped at step 1, no release)
+
+## Resume here (Y5)
+
+- **Step 0 done** (Y3e-b's leftovers): steps 0.1, 0.2, 0.3 committed. **Step 1 stopped (rule 7):
+  much bigger than the task said**; no release, no tag. Split accepted: Y5a (above), Y5b, Y5c,
+  Y5d.
+- Step 1 measured (game side only, `re/scratch/taskY5/g3` against `g0`: Spa chase, f2004
+  `trk_lap` from 480, 1280x720, QUALITY=3, `RENDER_ORACLE_GLARE=3 RENDER_ORACLE_RAYS=1`, the
+  shipped `default` filter): glare and light shafts add **43 draws and ~960 calls a frame**
+  (903 draws against 860) and 16 new target sizes. Everything YEBIS draws so far (Y2a..Y3e,
+  eight tasks) is ~10 draws. In draw order (frame 0's `ac.f0.gpulog`): 853-854 bright pass
+  (1280x720), 855-872 downsample + bloom levels (640x360 .. 24x14, `GenerateGlare_Source` /
+  `_Bloom` / `_Bloom_CompositeSubLevels`), 873-896 star streaks (24 draws at 192x108,
+  `GenerateGlare_Star` / `_StarStreaks`), 897 ghost (384x216, `GenerateGlare_Ghost`, 27 KB of
+  pseudo-C alone), 898-899 light shaft (128x64, then 1280x720, `GenerateGlare_LightShaft`),
+  900-903 composite and the tonemap. `re/decomp/GPURenderGlare` is 92 functions, 156 KB of
+  pseudo-C, plus `GPUGlareDef` (the shape presets) and `setPostProcessing` 0x140025080's glare
+  and god-ray blocks. Every shipped filter has `[GLARE] ENABLED=1` and `[GODRAYS] ENABLED=1`
+  (`default.ini`: SHAPE=11, ghost 0.15, 6-streak star, afterimage), so `[POST_PROCESS] GLARE`
+  > 0 needs all of the chain before any filter works; none is ported, glare and light shafts
+  are still refused (`crates/rustyac-render/src/yebis_cb.rs:122`).
+- Estimate and proposed split (each about a Y2b-size task, ~1.5 sessions): **Y5a** bright pass,
+  downsample and bloom (draws 853-872), with `[POST_PROCESS] GLARE` levels and the QUALITY
+  tables; **Y5b** star streaks and the `GPUGlareDef` shapes (873-896); **Y5c** ghost,
+  afterimage, anamorphic flare and the composite (897, 900-903; first point where a shipped
+  filter with glare can be IDENTICAL end to end); **Y5d** light shafts (`[GODRAYS]`, sun in and
+  out of view, 898-899), then step 3's rows and v0.49.0. 4 tasks, ~6 sessions.
+- Oracle: `RENDER_ORACLE_GLARE=<0..5>` and `RENDER_ORACLE_RAYS=1` write `[POST_PROCESS] GLARE` /
+  `RAYS_OF_GOD` and set the game's `ppGlare` (settings +0x40). Re-measure: `RENDER_ORACLE_YEBIS=1
+  RENDER_ORACLE_GLARE=3 RENDER_ORACLE_RAYS=1 RENDER_ORACLE_PP_QUALITY=3 render_oracle compare
+  --track spa --view chase --post --car ks_ferrari_f2004 --tape
+  oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --frames 3 --capture 0`
+  (the port refuses, the game's side is kept).
+- Decision (2026-11-12): YEBIS stays desktop only; Task Y4 (the page) is dropped (plan table
+  below, README's browser row, the page's settings say "(desktop only)").
+- Step 0.1: live `rustyac.exe` opens the headset first and makes its `CameraForwardYebis` with
+  `stereo` = a headset opened, as `Sim::createCamera` 0x1401982e0 (`initOculus`/`initOpenVR`
+  before the camera; on failure MODE=DEFAULT and the flat YEBIS camera). The `shortcut:` in
+  `crates/rustyac-game/src/render/ac.rs` is gone. Checked live: OpenVR stand-in root
+  (`re/scratch/taskY5/vr01`, eyes drawn, post-processing on, only eye-size targets bound) and
+  the real root without a runtime (`vr02`, note "VR: Could not initialize the vive; the plain
+  camera", flat YEBIS).
+- Step 0.2: `render_list.txt` rows take `RESIZE:<frame>:<W>x<H>` (`render.sh` sets
+  `RENDER_ORACLE_RESIZE`); the old resize scripts are rows `ry5_01` (FXAA, Y3), `ry5_02`
+  (triple, Y3d-2), `ry5_03` (first shimmer after a remake, Y3e step 0.4).
+- Step 0.3: resize in VR with post-processing, rows `ry5_04` (`--vr --post`) and `ry5_05`
+  (`--oculus --post --fxaa`). The first run found a real difference (pixels IDENTICAL, call log
+  not on the resize frame): `CameraForwardYebis::on_resize` remade the flat YEBIS targets in VR,
+  which the game, having no `CameraForwardYebis` there, never makes. Fixed in
+  `crates/rustyac-render/src/post.rs` (`stereo()`); now `ry5_01`..`05` 5 of 5 IDENTICAL
+  (`re/scratch/taskY5/proof0.txt`, `proof1.txt`).
+- Check step 0: `RENDER_ONLY='ry5_0[1-5]' PROOF_OUT=re/scratch/taskY5/proof sh tools/proofs/render.sh`.
+
+# Task Y3e: YEBIS in VR, and the Y3d-3 shortcuts (v0.48.8)
+
+## Resume here
+
+- **Done (v0.48.8).** Steps 0, 1 and 2: the Y3d-3 shortcuts are gone, VR runs YEBIS on OpenVR
+  and Oculus, proven on the stand-ins. Next: Task Y4 (YEBIS in the page); leftovers go to Task
+  Y3e-b (below).
+- End checks: `render.sh` rows `r23_09`..`r23_24`, `r47b_01`..`08`, `r47c_01`..`05`, `ry3e_01`..`05`
+  34 of 34 IDENTICAL (`re/scratch/taskY3e/proof2.txt`); `run_all.sh --quick` 170 of 170
+  IDENTICAL (`quick.log`); clippy native `--all-targets`, both wasm targets and wgpu clean
+  (`re/scratch/taskY3e/clippy.sh`; render_oracle's own 42 old clippy errors unchanged).
+- Task Y3e-b (left): live `rustyac.exe` still makes the flat camera's YEBIS targets beside a
+  headset's (`shortcut:` in `crates/rustyac-game/src/render/ac.rs`); the YEBIS remake on a
+  resize in VR is not proven (`RENDER_ORACLE_RESIZE` with `--vr --post` not run); the
+  first-shimmer-after-remake case is a script (`heat.sh`), not a row, because rows cannot set
+  `RENDER_ORACLE_RESIZE`.
+- New files: none in the repo's code (the web zip gains nothing); scratch scripts in
+  `re/scratch/taskY3e`.
+- Check step 0.1: `bash re/scratch/taskY3e/rand2.sh` (game side, 2 cars, `RENDER_ORACLE_RAND_LOG=1`)
+  and `cargo test --release -p rustyac-render --lib heat_shimmer`.
+- Check step 0.2: `LABEL=s2 bash re/scratch/taskY3e/cmp.sh` (the Y3d-3 compare, 52 frames,
+  writes `re/scratch/taskY3e/s2.log`); the game's sampler modes: `bash re/scratch/taskY3e/samp.sh`
+  (`RENDER_ORACLE_SAMPLER_LOG=1`, `SSM` lines in `samp.log`).
+- Check step 0.3: `LABEL=h1 bash re/scratch/taskY3e/heat.sh` or the row:
+  `RENDER_ONLY=ry3e_01 PROOF_OUT=re/scratch/taskY3e/proof sh tools/proofs/render.sh`.
+- Check step 0.4: `RENDER_ORACLE_RESIZE=48:1024x576 LABEL=r1 FRAMES=56 DUMP=49,55 bash
+  re/scratch/taskY3e/heat.sh` (dump only frames after the resize).
+- Check step 1: `MODE=--vr LABEL=v3 FRAMES=20 bash re/scratch/taskY3e/vrcmp.sh` and
+  `MODE=--oculus LABEL=o1 bash re/scratch/taskY3e/vrcmp.sh` (`EXTRA="--aa 4"` or `"--fxaa"` for
+  the other two paths; the game's side alone: `re/scratch/taskY3e/vrgame.sh`).
+
+## Step 1: YEBIS in VR (`YebisPP`, both headsets)
+
+- The game: with video.ini `ppHDREnabled` the stereo camera's constructor
+  (`StereoCameraVive` 0x140220b80, `StereoCameraForward` 0x140211370) turns `ppHeatShimmer`
+  off, makes one `YebisPP` 0x14002ba30 for both eyes (the eye's size, the left eye's texture as
+  its frame buffer), `loadPPSet("default")` (never video.ini's FILTER), turns chromatic
+  aberration off (+0x4b4), and makes `rtYebisTarget` (multisampled with AA, then
+  `rtYebisResolved` and `rtYebisResolvedDepth`) and, with FXAA and no AA, `rtFXAA_Temp` per eye.
+  `createCamera` makes no `CameraForwardYebis` and no `PostProcessEffectsUpdater` in VR.
+- `initPP` 0x140030540 computes the base width from QUALITY and then overwrites it with the
+  eye's width: `Yebis::new` now takes the base width, the callers compute it.
+- `renderYebis` (0x140223f60, 0x140213b10) per eye: the eye into `rtYebisTarget`,
+  `updatePPCameraValues` 0x14002bcc0 (chromatic aberration off, no depth of field),
+  `updatePP(eye == 0)` 0x14002c270, the MS resolve and depth resolve, YEBIS into the eye's
+  texture or into `rtFXAA_Temp` then FXAA into the eye; Oculus asks `ovr_GetHmdDesc` first and
+  commits each eye's chain after its YEBIS.
+- Two things the flat camera never shows:
+  - Without chromatic aberration YEBIS skips its two CA draws
+    (`DrawRectGPU_ChromaticAberration` 0x1403f0120; the Y2 notes called draw 1 camera motion
+    blur) and the luminance and tonemaps read the scene directly: `Camera::chromatic_aberration`.
+  - `updatePP` sets the tonemap exposure (`SetTonemapParameters`, CPostEffect +0x6f4) only for
+    the first eye, so the second eye's auto exposure works from the first eye's value:
+    `Camera::new_exposure` and `AutoExposure::tonemap`. Without it frame 0's second eye differs
+    (cbuffer +0x9a0 1.0 against 0.5).
+- The oracle's game side makes the stereo camera instead of `CameraForwardYebis` when VR and
+  `--post` meet (it crashed in `finishRendering` before), and needs `RENDER_ORACLE_YEBIS=1`.
+- Live `rustyac.exe` keeps making the flat camera's targets (a headset that fails falls back to
+  the screen), marked `shortcut:` in `render/ac.rs`.
+
+| Case (`vrcmp.sh`, Spa dash, trk_lap, 1280x720) | Frames | Call log | Pixels | Runtime calls |
+|---|---|---|---|---|
+| `--vr --post` (v3) | 20 | IDENTICAL | IDENTICAL | 390 the same |
+| `--vr --post --aa 4` (v4) | 8 | IDENTICAL | IDENTICAL | 174 the same |
+| `--vr --post --fxaa` (v5) | 8 | IDENTICAL | IDENTICAL | 174 the same |
+| `--oculus --post` (o1) | 8 | IDENTICAL | IDENTICAL | 168 the same |
+| `--oculus --post --aa 4` (o2) | 8 | IDENTICAL | IDENTICAL | 168 the same |
+| `--oculus --post --fxaa` (o3) | 8 | IDENTICAL | IDENTICAL | 168 the same |
+| plant: both eyes take a new exposure, `--vr` (vp) | 4 | frame 0 DIFFERENT, 8 lines | 460,685 of 1,843,200, max 85 | the same |
+| the same plant, `--oculus` (op) | 4 | frame 0 DIFFERENT, 8 lines | 460,632 of 1,843,200, max 85 | the same |
+
+## Step 0.4: the first shimmer after a YEBIS remake (proof only, no change)
+
+- The 100-times filter, the window resized to 1024x576 before frame 48 (three frames into the
+  shimmer): call log and pixels IDENTICAL in all 55 frames (`r1`).
+- Planted change: the remade YEBIS keeps the old copy sampler (point/clamp) instead of starting
+  again at linear/border (`r1p`): frame 48's call log DIFFERENT (1 line, at line 7448), pixels
+  the same there (the copy is texel to texel). So the game starts the copy's mode again with the
+  new textures, as the port's `Yebis::remade` does.
+- Not a render.sh row: `render_list.txt` rows cannot set `RENDER_ORACLE_RESIZE`.
+
+## Step 0.3: a shimmer row that moves pixels (`ry3e_01`)
+
+- No fake install was needed: both sides of `render_oracle` read the filters from the oracle's
+  own scratch root (`root::prepare` copies the game's `system/cfg/ppfilters` there), never from
+  the install.
+- `--ppfilter rustyac_heat_x100`: `prepare` writes it into the root from the root's `default.ini`
+  with `HEAT_PARTICLE_SHIMMER=0.4` (100 times 0.004), and it turns `[POST_PROCESS] HEAT_SHIMMER`
+  on. Nothing of AC's goes into the repo.
+- New full row `ry3e_01` (not quick): `spa_launch`, 52 frames, `--post --fxaa`, the shimmer from
+  frame 45. IDENTICAL in `render.sh`.
+- `re/scratch/taskY3e/heat.sh` (`h1`): call log and pixels IDENTICAL in all 51 frames. The same run
+  with `default.ini` (`h0`, IDENTICAL too): the game's frame 50 differs from `h1` in 86,603 of
+  921,600 pixels, frame 44 (before the shimmer) in none.
+- Planted change (port's shimmer 1.25 times, `h1p`, 48 frames): frames 45 to 47 DIFFERENT, call
+  log 4 lines, pixels 83,029 of 921,600, largest channel difference 200.
+
+## Step 0.2: the copy draw's sampler (the `copy_sampler` shortcut is gone)
+
+- New hook `RENDER_ORACLE_SAMPLER_LOG=1`: every `IGPUBaseTexture::SetSamplerStateMode`
+  0x140436580 (its `_Filter` and `_Address` tail-call it) as `SSM texture old new` and three
+  return addresses. Mode = address * 4 + filter (filter 0 linear, 1 point; address 0 border, 1
+  clamp, 3 wrap).
+- `DrawRectGPU_TonemapHDR` 0x1403f1b10 saves its two textures' modes, sets filter and clamp, and
+  at the end (machine code at 0x1403f29bd to 0x1403f29d1) restores the first texture's mode, then
+  stores the **second** texture's saved mode into the **first** again. The second texture is
+  the black one (`CRenderGlare::TonemapToSurface` 0x14041d7f0), mode 5 (point, clamp) from the
+  start. So every tonemap leaves its source at point/clamp.
+- In a shimmer frame the tonemap's source is the same texture object the shimmer copies from
+  (game log, frame 45: copy at mode 0, tonemap 0 to 5, the next copy at 5). Before frame 45 the
+  tonemap reads another texture and the copy source stays at mode 0.
+- The port now switches `copy_sampler` to point/clamp after round one's tonemap in a shimmer
+  frame, not in `shimmer()`.
+- Proof: call log and pixels IDENTICAL in all 51 frames (`s2`). Planted change (no switch):
+  call log DIFFERENT in frames 45 to 47, first at line 5472; pixels IDENTICAL (a same-size copy
+  gives the same pixels with either sampler).
+
+## Step 0.1: the shimmer sets are made once, from race.ini's cars
+
+- acs.exe: `Sim::createCamera` 0x1401982e0 reads race.ini `[RACE] CARS` and passes it to
+  `CameraForwardYebis::CameraForwardYebis`, which makes that many particle sets once.
+- rustyac.exe made 1 set at start, then remade them in `set_cars_to_be_loaded`. That drew 60
+  `rand()` more per extra car than the game.
+- Now `AcOptions::cars` carries the count into `start_yebis`, and the remake (`set_heat_sets`,
+  `Yebis::set_particles`) is gone. `render_oracle`'s port side already did this.
+- Proof (`re/scratch/taskY3e/rand2.sh`, 2 cars): between `srand(22)` and `srand(21)` the game
+  calls `rand()` 120 times, all from `KGLYebisParticle::initialize` 0x140024600 (return
+  140024867). Their values equal the MSVC stream seeded 22, the stream `remake` draws from. The
+  test `two_cars_take_120_rands_after_seed_22` checks that 2 sets take exactly those 120.
+
+# Task Y3d-3: YEBIS's heat shimmer (v0.48.7)
+
+## Resume here
+
+- **Done, released as v0.48.7.** With video.ini `[POST_PROCESS] HEAT_SHIMMER=1`, `rustyac.exe`
+  and `render_oracle`'s port side draw the shimmer behind slow cars (under 25 km/h) as the game
+  does: call log and pixels IDENTICAL, 1 car and 2 cars. Next is **Task Y3d-3b** (leftovers
+  below), then Y3e (VR with YEBIS).
+- Check the shimmer: `LABEL=c2 bash re/scratch/taskY3d3/cmp.sh` (52 frames of `spa_launch`,
+  `RENDER_ORACLE_HEAT_SHIMMER=1 RENDER_ORACLE_YEBIS=1`, dumps 44/46/50; the shimmer shows from
+  frame 45). The 2-car row: `LABEL=c3 FRAMES=100 DUMP=50,99 CARS="--tapes
+  oracle/t24b/field/mc_field --max-cars 2" bash re/scratch/taskY3d3/cmp.sh`.
+- `bash re/scratch/taskY3d3/end.sh` is the whole step 3: planted change, both rows again, the 16
+  `--post` rows, `run_all.sh --quick` and clippy every way; it writes `end.txt`.
+- Particles only: `bash re/scratch/taskY3d3/heat2.sh` (`RENDER_ORACLE_HEAT_DUMP=1`, the per-frame
+  `HEAT` lines of both sides, SAME).
+
+## Results
+
+| Case | Frames | Call log | Pixels |
+|---|---|---|---|
+| `spa_launch`, 1 car, f2004, 1280x720, `--post --fxaa`, HEAT_SHIMMER=1 (`f1`) | 51 | IDENTICAL | IDENTICAL |
+| `mc_field`, 2 cars, same options (`f2`) | 99 | IDENTICAL | IDENTICAL |
+| Planted: the sort turned nearest first (`plant`) | 51 | DIFFERENT in 7 frames from 45 (caught) | IDENTICAL |
+| The 16 `--post` rows (r23_09..r23_24) | 1 each | IDENTICAL | IDENTICAL |
+| `run_all.sh --quick` | 170 cases | 170 IDENTICAL | |
+
+The planted sort changes the vertex buffer's bytes, which the call log catches; the pixels stay
+the same because at the default filter's strength the shimmer changes no pixel here at all:
+`rustyac.exe --warp` at Spa's start (chase view, 10 particles drawn) gives the same PNG with
+HEAT_SHIMMER on and off. A temporary build with the vertex weight times 100 shows the shimmer
+behind the car (re/scratch/taskY3d3/shimmer_x100_probe.jpg). So at `default.ini` (SHIMMER=0.004)
+the shimmer is likely below one 8-bit step in the oracle's frames too (not measured there: no
+game run with the shimmer off on the same tape). A proof row that moves pixels needs a stronger
+filter.
+
+## Step 2 part 2: YEBIS's draws (done)
+
+- `crates/rustyac-render/src/yebis_heat.rs` (new), in the disassembly's order:
+  - `setupPfxParticles` 0x140024bb0 (the 14-float `PFX_PARTICLE_HEATSHIMMER`),
+  - the view YEBIS keeps at `CPostEffect`+0x59c: **`SetRenderSceneViewMatrix` 0x1403c2190 runs
+    after `SetRenderSceneCameraMatrix` and overwrites it**: inverse(ChangeHandedness(inverse(
+    `Camera::getViewMatrix`))). Built from the camera's world matrix instead, the yaw/pitch/roll
+    were off by ulps,
+  - the frustum of `UpdateParameters_EffectiveHeatShimmerParticleEnable` 0x1403ba2e0,
+  - `SetupHeatShimmerParticles` 0x1403fd860 (view-space cull, then `qsort` farthest first;
+    shortcut: a stable sort, msvcr120's qsort could order equal depths differently),
+  - `DrawIndicesGPU_HeatShimmerParticles` 0x1403fc950: the variables at 800, 2464, 3360 and 3584
+    and the 44-byte vertices (4 per particle).
+- `yebis.rs`: three effect surfaces (the third is the shimmer's copy), the programs
+  `HeatShimmerParticle_S1..S4` with packed float3/float4 layouts, three vertex buffers of
+  `m_uiMaxParticles` quads used in turn, and `HeatShimmerParticles` 0x1403fdc70 after each round's
+  first draw: the MadT1 copy, then the particles; the round's second draw reads the copy.
+- The copy samples with its source's own sampler mode. It is linear/border on the first shimmer
+  and point/clamp after (game logs f45/f46); shortcut: the port switches after its first copy,
+  the draw that changes the source's mode in the game is not traced (`DrawRectGPU_TonemapHDR`
+  0x1403f1b10 restores both textures' modes into the first one, a candidate).
+- `rustyac.exe`: `set_cars_to_be_loaded` remakes the sets and YEBIS's shimmer buffers for the
+  car count (`CameraForwardYebis::set_heat_sets`).
+
+## Step 2 part 1: the particles (done)
+
+- `crates/rustyac-render/src/heat_shimmer.rs` (new): the [HEAT_SHIMMER] keys, the particle sets,
+  `KGLYebisParticle::initialize` 0x140024600, `PostProcessEffectsUpdater::update` 0x1400abc20
+  (off above 25 km/h; each car's volume 2 m behind its body) and `KGLYebisParticleSet::update`
+  0x140024950. Random numbers come from the graphics `crt_rand`, as the game's render thread.
+- rustyac.exe: one set at start, remade with the real car count in `set_cars_to_be_loaded`
+  (shortcut: acs.exe makes CARS sets once in `Sim::createCamera`; the remake draws more `rand()`).
+- The oracle's game side passes `1 + others` sets to the `CameraForwardYebis` constructor.
+
+## Step 0 (done)
+
+- 848d613: the s1024 flake fix (CRenderGlare's glare scale is zeroed in its constructor).
+- 28dd5a3: the 38 fixed teardown releases, each named by its owner.
+- b7ed687: `RENDER_ORACLE_PP_QUALITY` and `RENDER_ORACLE_HEAT_SHIMMER` set video.ini and the
+  game's VideoSettings alike.
+  - Before this, the oracle's hand-made VideoSettings hard-coded `ppQuality` at +0x3c to 0.
+  - It now writes `ppHeatShimmer` at +0x39 too.
+- 4c49ebb: YEBIS's base width follows the camera's resized width, not the FXAA target's.
+  - `CameraForwardYebis::onResize` 0x140029da0 sets `width`, then `initRenderTargets` 0x140029a90
+    runs again.
+  - `quality.sh`: QUALITY 5 and 3, resized at frame 10, are IDENTICAL in all 13 frames, by call
+    log and by pixels. Before the fix, frame 10 differed in 159 log lines.
+
+## Step 1: rand() on the render thread (measured with `RENDER_ORACLE_RAND_LOG=1`)
+
+- At start, in this order:
+  1. `CameraFacing` calls `srand(0)` at 14005e737.
+  2. About 36,700 crowd `rand()` calls follow.
+  3. `srand(0)` at 14005f78a.
+  4. `ksRandomize(22)`.
+  5. **60 `rand()`: `KGLYebisParticle::initialize` 0x140024600, called from the set
+     constructor 0x1400247f0 (returns to 140024867).** That is 10 particles × 6.
+  6. `srand(21)` for the car.
+  7. One `ksRand` call at 14003378a (from 1400e024c).
+  8. Track load adds 9 more `rand()` calls at 1401c9b7e…1401ca20f.
+- `initialize` makes **6** `rand()` calls, not 7. They are at 140024681, 1400246b6, 1400246e1,
+  14002470e, 140024751 and 14002477c.
+- No `rand()` runs in frames 0–5. A particle calls `initialize` again when its life (0.75 to
+  1.75 s) runs out, so the frames from about 45 on draw from the same stream.
+- So the port must:
+  - take the 60 calls from `graphics.crt_rand` after the track seed (22) and before the car
+    seed (21);
+  - re-initialise from that same stream inside the frame loop.
+- At start, the volumes are still zero. Particle 0 starts at (0,0,0) with radius 0. Its first
+  re-initialise puts it at the car: the volume is about (-188.39, 5.66, -253.17), 1.5 × 1.5 × 0.
+
+## Not done (Y3d-3b)
+
+- The shimmer's blend program (`+0xa8c`, `SetHeatShimmerParticleBlend`): AC never calls it, not
+  ported.
+- The copy's sampler switch is a shortcut (above); the first shimmer after a YEBIS remake (resize)
+  is not proven.
+- Tied particle depths: the port's stable sort against msvcr120's qsort, not seen in the rows.
+- `rustyac.exe` makes one set at start and remakes the sets for the car count (more `rand()` than
+  acs.exe, which makes them once in `Sim::createCamera`).
+- No shimmer row in `tools/proofs` (the proof is `cmp.sh`), and no row with pixels the shimmer
+  changes (a ppfilter with a larger SHIMMER, needing a copied game folder).
+
+## Open questions
+
+- Which game draw leaves the effect surface's sampler mode at point/clamp after the first shimmer?
+
+# Task Y3d-2b: YEBIS's sizes from the game's code, and its two flakes (v0.48.6)
+
+## Resume here (Y3d-2b)
+
+- **Released as v0.48.6.** The four fitted values are now rules read from the game's code. Both
+  flakes had one cause, a heap byte the game never sets, and the oracle now zeroes it.
+- **Next: Y3d-2c** (leftovers, see "Not done"). **Heat shimmer stays in Y3d-3.**
+- Check:
+  - `bash re/scratch/taskY3d2b/sizes.sh` runs four never-measured sizes, each resized at frame 10
+    (14 frames each).
+  - `bash re/scratch/taskY3d2b/end.sh` runs trirsz20 five times, then the 16 `--post` rows, then
+    `run_all.sh --quick`.
+  - `RENDER_ORACLE_RT_LOG=1` now also prints `RTA` lines (each `CRenderTexturePool::AllocateTextures`
+    call: the request, its two callers, what it returned, and the pool's list) and `RTD` lines (each
+    `CRenderTexture::InitializeDevice`, with six return addresses).
+
+## The sizes, from the code
+
+All sizes hang off the effect buffers' base width. `CameraForwardYebis::initRenderTargets`
+(0x140029a90, decomp :122-131) sets `optFixedWidth = (int)(ppQuality / 5.0f * width)`, or
+`min(640, width)` when that is 0. `ppQuality` is video.ini `[POST_PROCESS] QUALITY`.
+`initPostProcessing` hands it to YEBIS as the effect-buffer criterion width, and
+`CPostEffect::Initialize` uses that as its base width (:764-771). This is `base_width`.
+
+- **Glare** (`glare_size`). `CPostEffect::Initialize` :1515-1530 computes
+  `(u32)(base * factor + 0.99)`, clamped to the base and the frame width. The height is
+  `(u32)(w / aspect + 0.499999)`. Below 16 the min-16 rule applies. The factor is
+  table 0x141521650[glare quality]: 0.125 at GLARE=0.
+- **DOF level 0** (`dof_sizes[0]`). Same shape, :1647-1700. The factor is
+  table 0x141521690 + quality·0x1c: 0.25 at DOF=0. 1280x720 gives 160x90.
+- **DOF level 1** (`dof_sizes[1]`). `CDepthOfField::CreateApertureFilterLevelParams` 0x14041f750
+  picks factor index 1 (table 0x14052dce8 = 0, 0.5, 0.75, 1) only when `this[0x129] == 0` and
+  `w0 <= this+0x118 || w0 <= this+0x144 · this+0x11c`. Those two are the DOF table's +0x14 (128) and
+  +0x18 (0.125), copied by `CDepthOfField::Initialize`; +0x144 is the frame width. Then level 1 is
+  (min(2w, W), min(2h, H)), else level 0's size again. So at 1280x720 (160 ≤ 160) it doubles, at
+  1024x770 (160 > 128 and > 128) it does not: each level's own target is 160x120.
+- **DOF halvings** (`half_pool`). `CDepthOfField::CreateSystemObjects` :185-205 and :1284-1294:
+  `n = max(0, ceil(ln(max((d0w+1)/W, (d0h+1)/H)) / ln 0.5) - 1)` halvings of W×H, each
+  `(u32)(x * 0.5 + 0.99)`. They come from the shared pool, so a size the pool already holds is
+  shared. The pool order is the DOF level-0 entry, then its double, then the halvings it lacks (RTA
+  log).
+  - The level asks the shared pool for that pair only when it doubles. `DOFLEVELPARAM::Initialize`
+    0x14041e420 counts +0x60 up only when the two sizes differ, and the level loop
+    (CreateSystemObjects :816-858) allocates nothing when +0x60 and +0x70 are 0. So at 1024x770 the
+    shared pool holds only the halvings (512x385, 256x193).
+- **Clear order** (`half_pairs`). `CDepthOfField::ClearAllGPUResources` 0x14042b930 clears:
+  - first its own pool (level 0);
+  - then the halvings list (this+0x458, count +0x460);
+  - then, in the level loop, level 1.
+  The RT_LOG `RTS` callers confirm it: 14042b954, 14042bb63, 14042bbb2.
+- **Teardown count.** `CRenderTexture::UninitializeDevice` 0x1403d29f0 puts the screen back only when
+  the texture holds a GPU texture (+0x28). So the count is one per made texture:
+  - 38 at every size;
+  - plus the glare's and DOF's pools;
+  - plus the luminance chain.
+- **The aspect after a resize.** `CPostEffect+0x2fc` is set once in `Initialize` (:784-788), and the
+  frame-10 remake is made at the old size. The chromatic aberration's matrix uses it. The port took
+  the aspect from the current frame size; `Yebis::render` now takes YEBIS's made size.
+- The old fitted `dof_sizes` (round(320·H/W)) gave the same sizes at every measured size. It is off by
+  one when frac(160·H/W) is in [0.25, 0.5), for example 1024x770 (old 160x121, code 160x120).
+
+## The run-dependent extra target and the trirsz20 flake (one cause)
+
+- `CPostEffect` is `CPfxMemoryAllocator::Alloc(0xbd8)`. Its constructor (0x1403bb820) never writes the
+  ambient-occlusion flag at +0x131. `Initialize` only sets it (:529-531). When that heap byte is
+  non-zero, `Initialize` makes `m_pAmbientOcclusion_NormalDepthTexture` (:1841-1853): an extra W×H
+  R16G16B16A16, at start-up and in every remake. The teardown frees it too, which accounts for the
+  extra pair.
+  - Proof: the hook forcing the byte to 1 gives 52 targets and 270 `RTU` (game-only run), against
+    51 and 267.
+  - Seen only in compare runs (two processes at once), never in 8 game-only runs.
+- trirsz20's rc=1 with everything IDENTICAL was the same byte at **frame 10** (the resize remake).
+  Frame 10's log differed on the first pass. compare then redrew frame 10 in fresh processes, the byte
+  was zero, so the redraw matched. compare still returns rc=1, which is right.
+  - Caught in `re/scratch/taskY3d2b/c2.log`: frame 10, game line 1923 is
+    `CreateTexture2D 1280x720 f9` and the port has none. Pixels are IDENTICAL.
+- Fix: render_oracle's `pfx_ctor_hook` zeroes +0x131 after the constructor (under
+  `RENDER_ORACLE_YEBIS`). This is listed under "Repeatability" in differences.md. rustyAC never makes
+  the target.
+
+## Results
+
+Each case is resized at frame 10 (`RENDER_ORACLE_RESIZE`), 14 frames (13 compared), `--post`, the
+f2004 lap tape at Spa from 480.
+
+| case | window → resize | frames | call log | pixels |
+|---|---|---|---|---|
+| s1024 (`--fxaa`) | 1024x770 → 1920x1080 | 13 | IDENTICAL | IDENTICAL |
+| s1920 (`--fxaa`) | 1920x1080 → 1250x800 | 13 | IDENTICAL | IDENTICAL |
+| s2560 (`--fxaa`) | 2560x1440 → 1024x770 | 13 | IDENTICAL | IDENTICAL |
+| s4800 (`--triple`) | 4800x900 → 3072x768 | 13 | IDENTICAL | IDENTICAL |
+| trirsz20 ×5 (`--triple`) | 5760x1080 → 3840x720 | 19 | 5/5 IDENTICAL in all 19 frames, rc=0 | 5/5 IDENTICAL |
+| 16 `--post` rows (r23_09..24) | as in render.sh | 1 each | 16/16 IDENTICAL (31/31 cases with the overlays) | IDENTICAL |
+| `run_all.sh --quick` | — | 340 cases in 27 areas | 340 passed | — |
+
+- s1024 at 1024x770 is the size where the old fit and the code differ (DOF level 160x120, no
+  double). Its first run said "4 frames with a different command log" (frames 10-13) on the first
+  pass, and the redraw of frame 10 matched. Four reruns with frames 10-13 dumped on the first pass
+  (`re/scratch/taskY3d2b/catch.sh`) were IDENTICAL in all 13 frames, so the cause is not known.
+  `render_oracle compare` now keeps the first pass's hashes as `<name>.<side>.first.seq` before the
+  redraw, so a repeat shows which side changed.
+
+## Not done (Y3d-2c)
+
+- The 38 fixed teardown entries are counted from the c1.log teardown (7 full-size, 25 glare, 2 DOF
+  levels, 128x64, 16x16, the AE/AF 1x1s). The UninitializeDevice rule is from code, but the list of
+  textures is not walked in code.
+- `[POST_PROCESS] QUALITY` other than 0 (base width = QUALITY/5·W) is read but never compared, and
+  the other glare/DOF quality tables are refused by yebis_cb.rs (Y5-Y7).
+- The s1024 first-pass difference above.
+
+## Open questions
+
+- What made s1024's frames 10-13 differ once, with the AO flag zeroed?
+- Does a DOF quality other than 0 change the level-1 rule (`this[0x129]`, the +0x118/+0x11c limits)?
+
+# Task Y3d-2: YEBIS's render targets, clears and teardown (v0.48.5)
+
+## Resume here (Y3d-2)
+
+- **Released as v0.48.5.** Frame 10 is IDENTICAL on both resize cases, and every step-5 proof passed.
+  - step 0: the launcher's fixed display-mode list (d089bd0);
+  - step 1: frame 0 compared on the `--post` rows (25b0317);
+  - steps 2 and 3: the targets, the clear pass and the teardown (cd6506c);
+  - step 4: answered by measurement, no code change (see below);
+  - step 5: the `--aa` fix (dcbf1ab), then all proofs;
+  - the `RENDER_ORACLE_RT_LOG=1` tool in render_oracle (7173e03).
+- **Next: Y3d-2b** turns the fitted shortcuts into rules read from the game code: `half_pool`,
+  `half_pairs`, `dof_sizes`, and the teardown count (38 + pools + chain). It should also explain the
+  run-dependent extra W×H f9 and extra teardown pair (see the open questions). **Heat shimmer stays in
+  Y3d-3.**
+- Check:
+  - `RENDER_ORACLE_RESIZE=10:1024x576 bash re/scratch/taskY3d2/cmp.sh rszfx <name> --track spa --view chase --post --fxaa $T`
+  - `RENDER_ORACLE_RESIZE=10:3840x720 bash re/scratch/taskY3d2/cmp.sh trirsz <name> --track spa --view chase --triple --size 5760x1080 --post $T`
+  - with `T="--car ks_ferrari_f2004 --tape oracle/audio/ks_ferrari_f2004/trk_lap.audiotape --tape-from 480 --frames 20"`.
+  - Then `python re/scratch/taskY3d2/startup.py re/scratch/taskY3d2/runs/<label>` (frame-10 diff).
+  - `re/scratch/taskY3d2/end.sh` runs the post rows. `end2.sh` runs both resize compares and then
+    `run_all.sh --quick`.
+- `render_oracle compare` returns rc=1 on a sequence when any frame differed on its first pass, even
+  if the redraw matched. The trirsz20 rc=1 did not come back in two reruns.
+
+## What step 5 fixed (dcbf1ab)
+
+The 7 `--aa` rows had a DIFFERENT static cube map (`start.viewport` 1x1 vs 1280x720). Two causes:
+- At startup, `Yebis::new` got no destination. With MSAA nothing is bound there, so the clear pass
+  skipped its restores. post.rs `start_yebis` now passes the FXAA target or the screen, and leaves it
+  bound without depth, as `initPostProcessing` does.
+- The game picks a source view by bind flags (0x1404340b0): an RTV if the texture binds as a render
+  target, else a DSV. With MSAA the resolved depth is a colour target (f41), so the game makes an RTV.
+  `Yebis::render` now follows the same rule.
+
+## What steps 2 and 3 changed (cd6506c)
+
+- `Yebis::new` makes the targets in the game's order: each texture, then its SRV, then its RTV. The
+  R11G11B10 RTVs use a format-0 desc. The game's targets that the port does not draw with (the glare's
+  25, TrimCircle, DOF, AE/AF 1x1s, the pool) are made and kept in `_kept`.
+- Sizes: `glare_size` (rule above), `glare_pool` (from the rule), `dof_sizes` / `half_pool` /
+  `half_pairs` (**shortcuts** fitted to the 1280x720, 3840x720 and 5760x1080 measurements).
+- The clear pass in the game's order and groups. Only 24 of the 25 glare targets are cleared, and the
+  double-size one is cleared alone as the 20th.
+- `teardown(screen)` binds the screen once per released target, plus two more. The count
+  38 + pools + chain is a **shortcut** fitted to the RT_LOG runs. post.rs `before_resize` calls it
+  before the swap chain is resized (render_oracle and rustyac.exe).
+- Both `remade` and `teardown` take YEBIS's destination (the FXAA target, or the screen) from the
+  caller, the way the game uses this+0x20, rather than reading the bound target. A kept back-buffer
+  view would make `ResizeBuffers` fail.
+- YEBIS's depth-stencil desc is zeroed first. A struct literal left stack garbage in its padding, and
+  the call log showed it.
+
+## Results (after dcbf1ab)
+
+| case | frames | call log | pixels | textures |
+|---|---|---|---|---|
+| launcher (step 0) | — | 12/12 IDENTICAL | — | — |
+| f0b (`--post`, frame 0 captured) | 0, 1 | IDENTICAL | IDENTICAL | — |
+| tri0 / tri10 (no resize) | 1 / 9 | IDENTICAL | IDENTICAL | — |
+| rszfx20b (1024x576 resize, FXAA) | 19 (112,954 game calls) | IDENTICAL in all 19 | IDENTICAL | — |
+| trirsz20b (5760x1080 → 3840x720, triple) | 19 (229,894 game calls) | IDENTICAL in all 19 | IDENTICAL | — |
+| 16 `--post` rows, `TEXTURE_DATA=1` | frame 0 + frame | 16/16 IDENTICAL, cube map included | IDENTICAL | identical |
+| `run_all.sh --quick` (0h50m, rc=0) | — | 13/13 areas IDENTICAL; 0 ERROR, 0 skipped, 0 vanished | — | — |
+
+## Step 4: the extra blend / A2C set
+
+There is none in the logs measured today:
+- rszfx frame 10 has 39 `OMSetBlendState` calls on each side, 9 of them with a2c=1, and 31
+  `CreateBlendState` on each side.
+- gpulog writes every `OMSetBlendState` call with no dedupe, so a redundant set would show up as a
+  different line.
+
+The Y3d-1 counts (4 vs 5, 3 vs 4) do not reproduce on today's logs.
+
+## The game's target list (from `CPostEffect::Initialize` 0x1403bbb80)
+
+**Creation order** (`InitializeDevice` calls, decomp :2090-2290):
+1. render buffer array
+2. glare modulator work (+0x120)
+3. effect colour alpha dest (+0x118)
+4. `CRenderGlare` (+0x108)
+5. DOF (+0x110, if this[0x128])
+6. objects +0x140..+0x180
+7. feedback buffers (+0x188)
+8. AE query scene luminance
+9. AF query scene depth
+10. `CTextureUtil::InitializeDeviceSharedTexturePool` (the pool)
+
+**How each target is made:**
+- Each render texture is a bind-0x28 texture, then its SRV, then its RTV, in that order. This is the
+  reverse of the port's `target()`.
+- f26 (R11G11B10) RTVs are made with a null desc (logged f0).
+
+**rszfx at 1280x720:**
+- 3× f9 1280x720 (render buffer: SRV/RTV f10)
+- f44 + DSV f45
+- 2× f27 1280x720 (f28 views)
+- 25× f26 glare targets: 80x45 ×4, 160x90, 80x45 ×20
+- 64x64 A8 SRV-only with one upload: `CRenderGlare::CreateDeviceResources` 0x140415520's "TrimCircle",
+  `GPUFillTexture_RadiusFade` with radius 0.5 (port: `yebis_tex::trim_circle`, hash 0x5ab5db7501af4869)
+- DOF f9 160x90 and 320x180
+- 128x64 f27
+- 1x1 f27, staging 1x1 f28, 1x1 f27, 1x1 f27, staging 1x1 f28
+- pool:
+  - f26 640x360 / 320x180 / 160x90
+  - f9 160x90 / 320x180 / 640x360
+  - f27 64x32 / 32x16 / 16x8 / 8x4 / 4x2
+
+**trirsz at 3840x720:**
+- glare 427x16 (854x32 in the 2× slot)
+- DOF 160x30 and 320x60
+- 128x24 f27
+- pool: f26 1920x360 / 960x180 / 480x90, f9 160x30 / 320x60 / 1920x360 / 960x180 / 480x90 / 240x45,
+  f27 64x8 / 32x4 / 16x2
+- (at 5760x1080 the pool also gains f9 180x34)
+
+**Size rules:**
+- **Glare** (:1516-1550):
+  - s = sqrt((this+0x2fc / this+0x324) / aspect) = 1
+  - a = (long)(w' · DAT_141521650[q·8] · s + 0.99), clamped to ≤ w' and ≤ w; w' is 1280 (flag bit 9 of
+    this+0x1dc) in every measured case, and k = 1/16
+  - h = (long)(a / ratio + 0.499999)
+  - If either a or h is < 16: when a < h, a = 16 and h = (long)(16 / aspect + 0.499999); otherwise
+    h = 16 and a = (long)(aspect · a + 0.499999) with the old a (3840x720: 5.333 · 80 → 427).
+  - This is why 3840x720 gives 427x16 and not 80x45: Y3c's question is answered.
+- **DOF levels** (`CDepthOfField::CreateSystemObjects` 0x1404200a0 :412-459):
+  - halve with (float)x · 0.5 + 0.99 per level from the DOF base size;
+  - a level that equals the size of the target at +0x200 reuses that target (refcount +1);
+  - the last level also gets a half-size partner.
+- **Pool lists:**
+  - this+0x3e0 (:1400-1450): halvings of e460 with (float)x · 0.5 + 0.99, count
+    max(0, ceil(log(max(...)) / log 0.5) − 1).
+  - this+0x3f8 (:1452-1515): halving pairs down to 16 wide, made with `AllocateTextures(pool, 2, ...)`.
+  - The pool shares a texture when `CRenderTexturePool::CanBeShared` 0x140412020 says so.
+
+## The clear pass (end of `Initialize`, ~:2596-2655)
+
+**Order:**
+1. pool `ClearAllGPUResources` 0x140411fb0
+2. `CRenderTextureArray::ClearAllGPUResources` 0x1404104e0: the 3 render-buffer targets, each with the
+   depth bound and `ClearDepthStencilView 1 1.0 0`, then one restore after all three
+3. `CRenderGlare` 0x14041c400, in groups bound with no restore in between
+4. DOF 0x14042b930
+5. feedback
+6. the +0x3e0 list
+7. the +0x3f0 pairs
+8. `InitializeAutoExposure` 0x1403c83d0
+9. `InitializeAutoFocus` 0x1403c8540
+10. `SetRenderTarget(this+0x20)` and `SetDepthStencilSurface(this+0x28)`, then
+    `IASetPrimitiveTopology 4`
+
+**Each single clear** is `CRenderTexture::ColorFill` 0x1403d2ff0:
+- bind the target and its viewport, then `ClearRenderTargetView 0`;
+- then bind the screen and its full viewport again.
+
+The owners of pool-shared targets clear them again after the glare. The exact sequence for both sizes
+is in `clears.py`'s output for `runs/rszfx` and `runs/rtlogtri`.
+
+## The teardown (step 3)
+
+- At the resize, `CPostEffect::Uninitialize` 0x1403c08a0 calls `CRenderTexture::UninitializeDevice`
+  0x1403d29f0 once per target. Each call binds the screen with no depth plus its full viewport.
+- The game's frame 10:
+  - 1 + N + 1 pairs of `OMSetRenderTargets 1 [screen] -` plus the viewport, then `OMSetRenderTargets 0 [] -`;
+  - rszfx: 52 pairs on the 1280x720 f28 screen;
+  - trirsz: 54 pairs on the 5760x1080 back buffer.
+- The port emits OM 0 at line 35 instead.
+- Port plan:
+  - save the bound screen RTV and size where `Yebis::new` rebinds it (~yebis.rs:465);
+  - add `teardown()`, called from `post.rs` `on_resize` before `forward.on_resize` (the old screen
+    must still be bound).
+- `RENDER_ORACLE_RT_LOG=1` logs every `SetRenderTarget` ("RTS") and `UninitializeDevice` ("RTU") with
+  callers. The runs are in `runs/rtlog` and `runs/rtlogtri`.
+
+## Open questions
+
+- The 64x64 A8 upload's data source: answered (TrimCircle, above).
+- Some game runs make an extra W×H f9 after the DOF levels (runs/rs3, runs/trirsz, Y3d-1's rszfx) and
+  others do not (runs/rszfx, runs/rtlogtri), with the same arguments and no `TEXTURE_DATA`. The port
+  never makes it. What decides it is not known (the per-thread `rand()` is a guess).
+- The pool's f9 list and the pairs' clear order are measured shortcuts (`half_pool`, `half_pairs`);
+  `CRenderTexturePool` sharing was not derived.
+
+# Task Y3d-1: YEBIS's device states, generated textures and buffers in the game's order
+
+## Resume here
+
+- **Released as v0.48.4.** `Yebis::new` now creates, in the game's order:
+  - `IGPUDevice::InitializeDevice`'s states: the DrawRect raster, depth and blend, 30 blend/raster pairs
+    and 16 samplers;
+  - the screen bind and its viewport;
+  - `CTextureUtil::InitializeDevice`'s textures, filled with the game's maths;
+  - the 1,541 buffers.
+
+  Shaders, the B4096 cbuffer and the input layouts are created on first draw, as the game does.
+- **Next: Task Y3d-2** (render-target pool, the 49 clears, the teardown; see "What next needs").
+- Check: run `RENDER_ORACLE_TEXTURE_DATA=1 bash re/scratch/taskY3d1/cmp.sh rszfx rszfx <args>`, with the
+  rszfx/trirsz arguments from `re/scratch/taskY3b/regress.sh`. Then run
+  `python re/scratch/taskY3d1/startup.py re/scratch/taskY3d1/runs/rszfx`. It compares game and port
+  from frame 10's first `CreateRasterizerState`, and counts differing screen-bind lines without
+  stopping at them.
+- Disk: C: had 21 GB free at the start and 21 GB before the proof runs.
+
+## What it found
+
+1. **gpulog `RENDER_ORACLE_TEXTURE_DATA=1`** (crates/rustyac-render/src/gpulog.rs). After each texture
+   `UpdateSubresource`, the texture is read back and renamed by its new contents, so the upload line
+   names the hash of what was uploaded. It is off by default, so the default proofs are unchanged.
+2. **Device states** (`IGPUDevice::InitializeDevice` 0x1403d4610):
+   - The DrawRect depth state is off, write mask ZERO, compare ALWAYS.
+   - The blend state has only RT0 filled; RT1–7 are zero bytes.
+   - The 30 pairs are blend first, then raster.
+   - The 16 samplers have MaxAniso 1 and comparison 0. The port's five samplers are game samplers 1,
+     4, 5, 13 and 0.
+   - `InitializeDeviceBuffers` takes the bound target (OMGetRenderTargets), rebinds it and sets a
+     viewport of its size.
+3. **Generated textures** (crates/rustyac-render/src/yebis_tex.rs; `CTextureUtil::InitializeDevice`
+   0x1403e6890). Each one is made as SRV first (MipLevels −1), then one upload per mip:
+   - **film grain:** `ppfx_GaussianNoise`, read from acs.exe at file offset 0x52fa20;
+   - **spectrum:** `GPUMath_Wavelength_to_RGB` over the CIE tables at 0x151f600 and 0x151f360;
+   - **mipmaps:** `GPUTexUtil_Build2DMipmaps` with its 4x4 dither bias;
+   - **Gaussian:** the 64x64 A8 radius fade;
+   - the three 1x1 textures, the 16x16 depth and the analyzer.
+
+   The maths is MSVCR120's `expf`, `logf` and `powf` from rustyac-math. No new CRT functions were
+   needed. The normalising maximum (`FUN_1403add60`, a static initializer) is recomputed from the table.
+4. **Buffers:** 768× B192 (the ring), B8, 768× B32, 3× B45056 and B3072, in that order. The two
+   buffers with initial data hash the same as the game's.
+5. **Lazy creation:** the game creates each VS, then the B4096 cbuffer on the first draw, then the PS.
+   The input layout comes after the cbuffers are bound. Identical bytes share one object, so frame 10
+   has 5 VS, 7 PS and 3 layouts, not 8 each.
+6. **Frame 10 of the resize runs.** The first difference is now the first render-target pool entry
+   (rszfx game line 1823, trirsz 1828), as planned. The screen-bind lines still differ: the game
+   rebinds its 1280x720 back buffer without depth, but the port has KGL's target with its depth bound.
+   The game binds the screen during its teardown (`CRenderTexture::UninitializeDevice`), which the
+   port does not have yet (Y3d-2). The game has one more texture upload than the port: a 64x64 A8 at
+   line 1917, inside the pool (Y3d-2).
+
+| Case | Frames compared | Call log | Pixels | Textures |
+|---|---|---|---|---|
+| 16 `--post` rows r23_09..r23_24 (render.sh) | each row's frames | IDENTICAL (16/16) | IDENTICAL (16/16) | not hashed (default) |
+| rszfx (resize at frame 10, start-up from line 152) | 20 | start-up IDENTICAL to line 1822 (2 screen-bind lines); whole log DIFFERENT (Y3d-2) | IDENTICAL | 28 uploads IDENTICAL |
+| trirsz (same, triple 5760x1080) | 20 | start-up IDENTICAL to line 1827 (1 screen-bind line); whole log DIFFERENT (Y3d-2) | IDENTICAL | 28 uploads IDENTICAL |
+| `run_all.sh --quick` (13 areas, 1h00m) | each case's | 169 of 170 IDENTICAL; launcher quickrace DIFFERENT once (live display-mode list, 1465 vs 489 bytes), IDENTICAL 1984/1984 when rerun alone | IDENTICAL | - |
+
+Frame 10 calls:
+
+| Case | Before | After |
+|---|---|---|
+| rszfx | start-up identical 152..152; 7,376 lines differ, first at 35 | start-up identical 152..1822; 6,622 lines differ, first at 35 (the teardown) |
+| trirsz | start-up identical 155..155; 13,714 lines differ, first at 34 | start-up identical 157..1827; 12,945 lines differ, first at 34 |
+
+## What next needs (Task Y3d-2)
+
+- The render-target pool, the array, the glare, DOF and luminance allocations, the resource manager's
+  creation order and the 49 clears (Y3c item 1). This includes the 64x64 A8 at game line 1917.
+- The teardown (`CPostEffect::Uninitialize` → `CRenderTexture::UninitializeDevice`). It also fixes
+  the screen-bind lines: the game binds its back buffer with no depth.
+- The one extra blend and A2C set in the port's YEBIS draws (4 vs 5 and 3 vs 4 against the game), not
+  investigated.
+- Heat shimmer (Y3d-3) and VR with YEBIS, unchanged.
+
+## Not done
+
+- Y3d-2 and Y3d-3 above.
+- Frame 0's start-up is still not compared: capture starts at frame 1. Only the frame-10 remake
+  checks it.
+
+## Open questions
+
+- Why the port sets the blend and A2C state once more than the game in its YEBIS draws (pixels agree).
+
+# Task Y3c: YEBIS's setup and teardown mapped in game code; step 1 stopped before it (rule 7)
+
+## Resume here
+
+- **Not released (no code change).** Step 1 is about 60 KB of game code, not the expected ~30 KB, so
+  it was stopped before it under rule 7. Steps 2 and 3 depend on it. The whole of it moves to **Task
+  Y3d**, split as below. Heat shimmer and VR with YEBIS move with it.
+- Check (unchanged): `bash re/scratch/taskY3b/regress.sh`. Frame-10 logs of the resize run are in
+  `re/scratch/taskY3/runs/rszfx/*.f10.gpulog`. `re/scratch/taskY3c/init_skim.c` is
+  `CPostEffect::Initialize` with prints and declarations removed (scratch only, not committed).
+- Disk: C: had 21 GB free at the start and 21 GB at the end (no build or run was made).
+
+## What it found
+
+1. **Who creates what on a remake** (the order in game frame 10 of rszfx, log lines 141–2200):
+   - The KGL resize (lines 141–151, already ported).
+   - `IGPUDevice::InitializeDevice` 0x1403d4610 (lines 152–232), about 3.5 KB:
+     - `…_DrawRectDefaultStates` 0x1403d48c0: raster, depth, blend.
+     - `…_RenderStateMode` 0x1403d4b00: for p in 0..64, a blend then a raster, only when
+       blend = p&7 ≤ 4 and write = p>>3&3 ≤ 2 (30 pairs). Blend modes: 0 (off, 2/2/1), 1 (5/6/1), 2
+       (2/2/1), 3 (2/4/1, alpha 2/6/1), 4 (2/0xe/1). Write masks: 0xf, 7, 8. Scissor = p>>5&1.
+     - `…_SamplerStateMode` 0x1403d4dd0: 16 samplers. kind p&3 is filter 0x14/0/0x14/0x15 with MaxLOD
+       0/0/FLT_MAX/FLT_MAX. Address p>>2&3 is border/clamp/mirror/wrap (W is always clamp). The
+       port's SB, SL, SP, SW and SLB are game samplers 1, 4, 5, 13 and 0.
+     - `InitializeDeviceBuffers` 0x1403d4330: OMGetRenderTargets, then binds the screen and its
+       viewport (lines 231–232).
+     - The D3D11 runtime normalizes bound state descriptions, so creating the states with the game's
+       exact bytes leaves every per-frame log line as it is.
+   - `CTextureUtil::InitializeDevice` 0x1403e6890 (4,944 B, reached through a vtable) creates:
+     - lines 233–281: a 16x16 f27 target; the 4x4 dither; film grain 256x256 with 9 mips; spectrum
+       256x1 with 9 mips; Gaussian 64x64 A8 with 5 mips; three 1x1 textures; a 16x16 depth; a 16x16
+       analyzer.
+     - lines 282–1822: 768× B192 (the port's ring), B8 with data, 768× B32, 3× B45056, and B3072 with
+       data.
+   - Render targets (lines 1823–1970, about 40) are allocated through `CRenderTexturePool`
+     (`AllocateTextures` 0x140411900, `CanBeShared` / `PostTexture`, which decide how many distinct
+     80x45 targets exist), `CRenderTextureArray` (0x14040ede0 / 0x14040f710), the glare and DOF
+     `CreateSystemObjects` (0x140413c00 6,432 B, 0x1404200a0 9,904 B) and the luminance managers
+     (0x140432ea0 / 0x140431b70). They are then created on the device in `CGPUResourceManage`
+     registration order (`ResetDevice` 0x1403dd640, `InitializeDevice` 0x1403dd8b0). The whole run is
+     driven by `CPostEffect::Initialize` 0x1403bbb80 (19,744 B).
+   - **The 49 clears** come from `CRenderTexture::CreateDeviceResources` 0x1403d1280 (2,320 B), which
+     clears when `ms_bClearWhenInitializeDevice` is set (`CPostEffect::Initialize` sets it). Each clear
+     binds the target and viewport, clears to 0 and rebinds the screen. Some runs of 80x45 targets rebind the screen only
+     once; why is not traced yet.
+2. **The teardown's source.** `CPostEffect::Initialize` first calls `CPostEffect::Uninitialize`
+   0x1403c08a0 (4,048 B). That releases each render texture through `CRenderTexture::UninitializeDevice`
+   0x1403d29f0 (1,328 B), which:
+   - takes the default surface (device vtable +0x58);
+   - binds it as target 0 (+0x30), which logs the OMSet screen and viewport pair;
+   - sets targets 1–3 and the depth to null (+0x30 / +0x38).
+
+   So a remake really is teardown plus setup inside one `Initialize`. `IGPUDevice::ReleaseDeviceBuffers`
+   0x1403d55f0 and `CTextureUtil::UninitializeDevice` 0x1403e7c10 release the rest.
+3. **Size.**
+
+   | Part | Code |
+   |---|---|
+   | device states | ~3.5 KB |
+   | CTextureUtil | ~5.8 KB |
+   | CPostEffect::Initialize | 19.7 KB |
+   | glare | ~7.3 KB |
+   | DOF | ~11.3 KB |
+   | luminance | ~2.1 KB |
+   | pool, array, render texture and resource manager | ~10 KB |
+   | teardown | ~6.5 KB |
+   | **total** | **about 66 KB, against the ~30 KB expected** |
+
+4. **A gap in the proof.** The oracle names a texture by a hash read back when its first view is
+   created, which is before `UpdateSubresource`, so the hash is of an empty texture. The generated
+   textures' contents (film grain, spectrum, Gaussian, the 64x64 A8 at line 1915) therefore never
+   reach the call log. Only the B8 and B3072 buffers are checked by content. Proving the CRT maths
+   needs a gpulog option, behind an env var, that hashes texture `UpdateSubresource` data.
+5. **`rand()` for heat shimmer.** acs.exe has 39 `rand` call sites and 4 `srand` sites. Some are
+   `ksRand` 0x140033770 / 0x1400337c0, which `CarBrakeLights::loadLights` and others use. The
+   `ksRandomize` 0x14004b290 site sits in `ACClient::handshakeTCP`, and `CameraFacing::CameraFacing`
+   0x14005e640 and `PhysicsDriveThread::run` / `step` call `srand` themselves. MSVCR120 keeps the
+   `rand` state per thread (`_holdrand` in the thread data). So the physics thread's draws never mix
+   with the render thread's, and the shimmer only has to follow the render thread's sequence.
+
+| Case | Frames compared | Call log | Pixels |
+|---|---|---|---|
+| all (no code change; nothing run) | - | - | - |
+
+## What next needs (Task Y3d, split)
+
+- **Y3d-1, about 1 session.** Port the device states, `CTextureUtil::InitializeDevice` (textures with
+  their CRT maths, plus the 1541 buffers) and the screen bind into `Yebis::new`, in the game's order.
+  Map the port's five samplers to game indices 1, 4, 5, 13 and 0. Add the gpulog texture-data hash.
+  Frame 10's first difference should then move from line 141 to the first render target at line 1823.
+- **Y3d-2, about 2 sessions.** Port the render-texture side: the pool's sharing rules, the array, the
+  glare, DOF and luminance allocations, the resource-manager creation order and the 49 clears. The
+  port's effect, tonemap, luminance, analysis and depth targets become entries of that set. Then port
+  the teardown (`CPostEffect::Uninitialize` → `CRenderTexture::UninitializeDevice`), so a remake is
+  `Uninitialize` plus `Initialize`. Check: rszfx and trirsz frame 10 IDENTICAL, then the 16 `--post`
+  rows and `--quick`.
+- **Y3d-3, heat shimmer, about 1–1.5 sessions, after Y3d-1** (it needs the CTextureUtil textures):
+  - The updater 0x1400abc20 and `KGLYebisParticle::initialize` 0x140024600, which draws seven
+    `rand()` per particle.
+  - The four PPFX functions and their programs.
+  - A root with `HEAT_SHIMMER=1` and a slow tape segment.
+  - For `rand()`, one render-thread `MsvcRand` (crates/rustyac-physics/src/session.rs), starting at 1
+    like MSVCR120's per-thread default. Pass it by `&mut` to every render-thread caller in the game's
+    order (`ParticleGenerator::generateParticle`, `SkyBox::updateCloudsGeneration`,
+    `ACCameraManager::stepCameraRandom`, `CameraModeStart::updateCar`, `ksRand` users, the shimmer
+    particles), applying `CameraFacing`'s and `ksRandomize`'s `srand` where the game calls them.
+    Physics-thread callers (AI, drag, pit, sessions) keep their own state.
+  - Before porting, list the render-thread callers that are live in the proof's frames, for example by
+    counting calls through the `rand` import slot in an oracle run. A frame with no other live
+    caller makes a first proof possible without the rest.
+- VR with YEBIS (`YebisPP`): about one session, unchanged.
+
+## Not done
+
+- Steps 1–3: the setup port, the teardown port, the runs and the v0.48.4 release. All of them were
+  stopped under rule 7 with the estimate above.
+- Heat shimmer and VR with YEBIS (Task Y3d).
+
+## Open questions
+
+- Whether `CRenderTexturePool::CanBeShared` gives the same sharing at every window size, or whether
+  the number of 80x45 targets changes with the size (to be checked in trirsz at 3840x720).
+- Which render-thread `rand()` callers are live in a shimmer proof's frames: particles and sky clouds
+  likely are.
+
+# Task Y3b: the two Y3 shortcuts from game code; the resize remake and heat shimmer stopped (rule 7)
+
+## Resume here
+
+- **Released as v0.48.3.** The two Y3 shortcuts are now rules read from game code (step 2). Step 1 (the
+  resize frame's call log) and step 3 (heat shimmer) were stopped under rule 7 and moved to **Task Y3c**,
+  together with VR with YEBIS.
+- Check: `bash re/scratch/taskY3b/regress.sh` runs rszfx, trirsz, tri and aeoff one after another
+  (through `re/scratch/taskY3/cmp.sh`) and writes `re/scratch/taskY3b/regress.txt`.
+- Disk: C: had 23 GB free at the start and 19 GB before the runs (under the 22 GB mark). Free RAM was
+  11.1 GB before the runs; the quick run still used its full lanes (it checks at its own start).
+
+## What it found
+
+1. **The linear filter rule** is `CTextureUtil::Resample` 0x1403f6710. The second texture's sampler mode
+   is set through `IGPUBaseTexture::SetSamplerStateMode_Filter` 0x1404365b0 (vtable +0x68, `(mode & ~3) |
+   filter`). It is point when that texture's size equals the destination's (+0x5c / +0x60), and
+   otherwise linear (min/mag linear, mip point). The address bits (border) are kept. Draw 0 binds
+   [depth, scene], so the scene is that second texture, and the port's size test was already the
+   game's. Only the comment changed.
+2. **The vignette on a triple-screen resize.** The `CameraTripleScreen` ctor 0x1402248e0 registers
+   lambda 0x140224dc0 on `evOnPostYebisParametersUpdate` (CameraForwardYebis +0x788). It is fired in
+   `CameraForwardYebis::render` 0x14002a450 at 0x14002a57c, right after `updateYebisParameters`. So
+   the vignette is zero at a remake only once a frame has been rendered. `post.rs` now keeps
+   `parameters_updated` and tests it in `on_resize`, which replaces the "no caller does that" marker.
+3. **The resize remake (step 1) is bigger than its Y3 estimate.** Frame 10's pixels were already
+   IDENTICAL in rszfx and trirsz. What differs is only PPFX's full device setup:
+   - IGPUDevice states: `DrawRectDefaultStates`, the 0x40-mode `RenderStateMode` loop (5 blend modes ×
+     3 write masks × scissor), and 16 `SamplerStateMode`.
+   - `CTextureUtil::InitializeDevice` 0x1403e6890 (4,944 B): film grain 256x256 with 9 mips, spectrum
+     256x1 with 9 mips, Gaussian fade 64x64 A8 with 5 mips, zero / grey / one, a 16x16 depth, and a
+     16x16 analyzer, all with exact CRT math.
+   - `IGPUDevice::InitializeDeviceBuffers`: 768× B192, 768× B32, 3× B45056 and B3072.
+   - `CPostEffect::Initialize` 0x1403bbb80 (19,744 B): about 40 targets (glare, DOF and luminance
+     managers) and 49 clears.
+   - 52 OMSet + viewport pairs during teardown, whose source was not found.
+4. **Heat shimmer (step 3) is bigger than its Y3 estimate.**
+   - `PostProcessEffectsUpdater::update` 0x1400abc20 is small: it is off above 25 km/h for the focused
+     car, and it stops at the first car that is not connected. For each car under 30 it places a volume
+     at the body matrix times (0, 0, -2, 1), plus 0.5 in y, with width 1.5, depth 1.5 and height 0.
+   - The particles in those volumes use CRT `rand()` (`KGLYebisParticle::initialize` 0x140024600:
+     seven calls per particle), so the port's rand sequence would have to match every other `rand()`
+     user in the frame.
+   - The effect itself is about 8.8 KB of PPFX: `HeatShimmerParticles` 0x1403fdc70 (1,392),
+     `SetupHeatShimmerParticles` 0x1403fd860 (1,040), `DrawIndicesGPU_HeatShimmerParticles` 0x1403fc950
+     (3,856), and `UpdateParameters_EffectiveHeatShimmerParticleEnable` 0x1403ba2e0 (464).
+   - Its default textures (CTextureUtil +0x21668 / +0x21678) come from step 1's unported init.
+   - A proof also needs a new run: the oracle root has `video.ini HEAT_SHIMMER=0`, and the trk_lap tape
+     from frame 480 is above 25 km/h.
+
+| Case | Frames compared | Call log | Pixels |
+|---|---|---|---|
+| rszfx, resize to 1024x576 at frame 10, FXAA | 19 | 18 IDENTICAL; frame 10 DIFFERENT (7981 vs 6684 calls, same 864 draws; step 1) | IDENTICAL in all |
+| trirsz, triple, resize to 3840x720 at frame 10 | 19 | 18 IDENTICAL; frame 10 DIFFERENT (14315 vs 12992 calls, same 1590 draws; step 1) | IDENTICAL in all |
+| tri, triple 5760x1080 `--post` | 19 | IDENTICAL in all | IDENTICAL in all |
+| aeoff, spa chase, `ae_off` filter | 38 | IDENTICAL in all | IDENTICAL in all |
+| heat shimmer (step 3) | not run | - | - |
+
+`tools/proofs/run_all.sh --quick`: all 170 cases IDENTICAL in 13 areas, no error, skip or vanished case
+(1h04m). Clippy `-D warnings --all-targets` is clean natively, with `--features wgpu`, and on both wasm
+targets; `cargo test -p rustyac-render --lib yebis` passes.
+
+## What next needs (Task Y3c)
+
+- Step 1: port PPFX's device init in its order (the list above), make the shaders and the B4096 cbuffer
+  lazy as now, and find the teardown's 52 OMSet / viewport pairs (likely `CPostEffect::Uninitialize` /
+  `OnLostDevice`, or the IGPUDevice release). About 1.5 to 2 sessions.
+- Step 3, after step 1 (it needs the CTextureUtil textures):
+  - the updater and `KGLYebisParticle*` (initialize, set update, manager setup) on the port's CRT `rand()`
+  - the four PPFX functions and the `HeatShimmerParticle_Sn` / `MadT1_Sn` programs
+  - a root with `HEAT_SHIMMER=1` and a slow tape segment (a standing start)
+
+  About 1 to 1.5 sessions.
+- VR with YEBIS (`YebisPP`), unchanged from Y3: about one session or more.
+
+## Not done
+
+- Step 1 (frame 10's call log on resize) and step 3 (heat shimmer), both stopped under rule 7 with the
+  estimates above.
+- VR with YEBIS (Task Y3c, as planned).
+
+## Open questions
+
+- Where the 52 OMSet + viewport pairs at YEBIS teardown come from.
+- Whether the port's `rand()` order can match the game's for the shimmer particles, or whether the
+  proof needs a run with no other `rand()` users in the frame.
+
+# Task Y3: YEBIS on resize, auto exposure off, triple screens; the remake, VR and heat shimmer stopped (rule 7)
+
+## Resume here
+
+- **Done, released as v0.48.2.** YEBIS now sizes its luminance target and analysis chain from the window
+  like the game (`luminance_sizes` / `box_taps` in `yebis.rs` / `yebis_cb.rs`), picks the analysis
+  program by tap count (`MadT1_S1` / `_S2` / `_S5`), uses the no-vignette tonemap programs when the
+  vignette is zero (triple screens), keeps the FXAA target at its old size on resize, and draws nothing
+  for the luminance with auto exposure off.
+- Next is **Task Y3b**: the three steps stopped under rule 7 (below), each about one session.
+- Check one run: `bash re/scratch/taskY3/cmp.sh <label> <out> <render_oracle compare args>` writes
+  `re/scratch/taskY3/<out>.txt`; `re/scratch/taskY3/regress.sh` reruns the cases below one after another.
+  The `ae_off` filter is `default` with `[AUTO_EXPOSURE] ENABLED=0`, in the scratch root
+  `re/scratch/taskY2c/root/system/cfg/ppfilters/`.
+- Test: `cargo test --locked -p rustyac-render --lib yebis`.
+- Disk: C: had 24 GB free; `tools/proofs/archive_kept.sh` (dry run) found 0 old kept folders, so there was nothing to move.
+
+## What it found
+
+1. **Luminance size** (`CPostEffect::Initialize` 0x1403bbb80): power-of-two floor of `W>>3` by `H>>3`;
+   when wider than 128 it is 128 by `(int)(128/aspect + 0.49999)`. 1280x720 gives 128x64, 5760x1080
+   gives 128x24 (the port had 128x64 hard-coded; the triple log differed there).
+2. **Analysis chain** (`CTextureLuminance::CreateSystemObjects` 0x140431b70) and its taps: per axis
+   `n = ceil(s/2/d)`, one fewer when `n > 1`, `d ≥ 8` and the edge rule holds, at most 5; 1, 2 or 5 taps
+   choose `MadT1_S1`, `MadT1_S2` or `MadT1_S5`. The analysis and no-vignette programs are made lazily on
+   their first draw, as the game does.
+3. **Triple screens zero the vignette** (CameraTripleScreen handler 0x140224dc0) and
+   `DrawRectGPU_TonemapHDR` 0x1403f1b10 then uses `TonemapHDR_PreMatrix_Dither_Gamma` and
+   `TonemapHDR_Dither_Exposure_LINEARSAT` with an all-zero rectangle.
+4. **Resize keeps the FXAA target** at its first size, and YEBIS is remade at that size, so the effects
+   run at the old size and the result is scaled into the new window. Not seen as a visible fault in the
+   runs; the port does the same.
+5. **The scaled scene uses the linear sampler** when the scene and YEBIS sizes differ (rule read from the
+   game's logs, `shortcut:` in `yebis.rs`).
+6. **Auto exposure off** draws no luminance step; proven
+   over 38 frames, its `shortcut:` is gone.
+7. **gpulog**: a texture created at a released buffer's address was taken for that buffer; fixed.
+
+| Case | Frames compared | Call log | Pixels |
+|---|---|---|---|
+| aeoff, spa chase, `ae_off` filter | 38 | IDENTICAL in all | IDENTICAL in all |
+| tri, triple 5760x1080 `--post` | 19 | IDENTICAL in all | IDENTICAL in all |
+| rszfx, resize to 1024x576 at frame 10, FXAA | 20 | 19 IDENTICAL; frame 10 DIFFERENT (7981 vs 6684 calls, same 864 draws) | IDENTICAL in all |
+| trirsz, triple, resize to 3840x720 at frame 10 | 19 | 18 IDENTICAL; frame 10 DIFFERENT (14315 vs 12992 calls, same 1590 draws) | IDENTICAL in all |
+
+`tools/proofs/run_all.sh --quick`: all 170 cases IDENTICAL in 13 areas, no error, skip or vanished case (1h00m). Clippy `-D warnings --all-targets` is clean natively and on both wasm targets; render_oracle's own `--all-targets` clippy still has its 25 old errors (none from this task).
+
+## Stopped under rule 7 (Task Y3b)
+
+- **The resize frame's remake (step 1, call log of frame 10).** The game's YEBIS init rebuilds its whole
+  device setup: CreateBuffer 1542 vs 770, render-target views 51 vs 13, Texture2D 64 vs 20,
+  ClearRenderTargetView 49 vs 0, blend / rasterizer states 31 vs 0, all inside PPFX's own setup. Pixels
+  and the draw sequence already match. About half a session to one session.
+- **`PostProcessEffectsUpdater::update`** 0x1400abc20 (step 2) drives the heat shimmer: active when the
+  focused car is under 25 km/h, a projected particle per connected car (up to 30), from `[HEAT_SHIMMER]`
+  (`ENABLED=1` in default.ini and most filters). Modelling it means porting a new YEBIS effect (the
+  shimmer draws). About one session.
+- **VR with YEBIS (step 3).** `YebisPP` 0x14002ba30 is its own class, made by `StereoCameraForward`
+  0x140211370 and `StereoCameraVive` 0x140220b80: one instance per camera, shared by both eyes.
+  `StereoCameraVive::renderYebis` 0x140223f60 runs per eye: render into `rtYebisTarget`,
+  `updatePPCameraValues`, zero `+0x5a4` / `+0x48`, `updatePP(eye==0)`, `applyPostProcessing` (optional
+  MSAA and depth resolve) into the eye's target or through `rtFXAA_Temp` and an FXAA quad. Its
+  `readPPSet` 0x14002cd60 is 14 KB on its own. About one session or more, plus oracle runs with the
+  OpenVR / Oculus stand-ins. Triple screens are done (one YEBIS over the whole window, as the game).
+
+## What Y4 (the page) needs
+
+- The page still uses the plain-copy stand-in. YEBIS's programs can't ship, so the page needs them from
+  the player's own install (as the desktop reads `acs.exe`) and translated for wgpu, then the same rules
+  as here: `luminance_sizes`, `box_taps`, the lazy programs, the FXAA target kept on resize, and a
+  luminance read-back that fits WebGPU's asynchronous buffer mapping.
+
+## Not done
+
+- The three rule-7 steps above.
+- Glare, depth of field, rays of god and heat shimmer (filters with them are refused).
+
+# Task Y2c: YEBIS over many frames, eye adaptation and a window resize
+
+## Resume here
+
+- **Done, released as v0.48.1.** YEBIS now runs every frame like the game: the luminance analysis and
+  read-back, eye adaptation (`AutoExposure` in `yebis_cb.rs`), and a remake on window resize
+  (`CameraForwardYebis::on_resize`). The proofs' `--post` rows run the real YEBIS on both sides
+  (`tools/proofs/render.sh` sets `RENDER_ORACLE_YEBIS=1`); r23_09 is in `--quick`, every `--post` row is in `--full`.
+- Superseded: Task Y3 above did Y2d's leftovers and triple screens.
+- Check one run: `bash re/scratch/taskY2c/cmp.sh <label> <out> <render_oracle compare args>` writes
+  `re/scratch/taskY2c/<out>.txt`. New oracle inputs: `--ppfilter <name>` (video.ini `FILTER=`) and
+  `RENDER_ORACLE_RESIZE=<frame>:<W>x<H>` (resizes the window before that frame's capture; dump only frames
+  after it, the PNGs use the last size).
+- Test: `cargo test --locked -p rustyac-render --lib yebis`.
+
+## What it found
+
+1. **The ppfilter is loaded by loadPPSet** 0x140029960 from video.ini's `FILTER`. The oracle's game side
+   now calls it with `--ppfilter`, so a second filter (`default_dark`, filmic) is proven.
+2. **The vertex ring starts on buffer 767**, so the first map of a run is the wrap's discard.
+3. **Frame 0 differs on purpose**: the game makes YEBIS's shaders and layouts lazily on first use.
+   Sequences capture from frame 1, as before.
+4. **Eye adaptation** is `CTextureLuminanceManage::UpdateFrame` 0x140433230: a 17-slot history. The
+   luminance target is read back (staging copy of the 1x1), weighted 0.2126 / 0.7152 / 0.0722 times
+   0.003921569, decoded with the filmic `-logf(1-x)`, smoothed in log space with
+   `rate = 1 - powf(0.050000012, dt*6/0.1)` and lerped between slots. The analysis is two draws,
+   `MadT1_S1` (2:1 resample) and `MadT1_S2` (4x2 to 1x1). `logf` now comes from MSVCR120 like the other
+   CRT functions. Exposure on the La Source run (default_dark), game = port:
+
+   | Frame | 20 | 60 | 100 | 140 | 180 | 220 | 239 |
+   |---|---|---|---|---|---|---|---|
+   | Exposure | 0.4846618 | 0.3045707 | 0.2810263 | 0.2782328 | 0.2686784 | 0.2682259 | 0.2686277 |
+
+5. **Resize**: `GraphicsManager::onResize` 0x140204330 calls `kglResizeBuffers` 0x1400193d0
+   (`ResizeBuffers(0,0,…)` takes the window's client size, so the window is sized first), then
+   `CameraForwardYebis::onResize` 0x140029da0 remakes YEBIS. The noise is process-wide and survives. The
+   remade 1x1 textures and the 4x4 dither are created empty, then get their view, then `UpdateSubresource`
+   (gpulog keys a texture made inside a capture by that order).
+6. **With FXAA on**, start leaves YEBIS's destination (the FXAA target) bound, not the screen. This
+   fixed the 5 FXAA rows' first cube-map line.
+
+| Case | Frames compared | Call log | Pixels |
+|---|---|---|---|
+| 16 `--post` rows r23_09..r23_24 | 1 to 59 each | IDENTICAL | IDENTICAL |
+| f16, spa chase | 15 | IDENTICAL in all | IDENTICAL in all |
+| lsrc, La Source, default_dark, light changes | 239 | IDENTICAL in all | IDENTICAL in all |
+| rsz, resize to 1024x576 at frame 10 | 19 | 18 IDENTICAL; frame 10 DIFFERENT (7961 vs 6672 calls, same 863 draws) | IDENTICAL in all |
+
+`tools/proofs/run_all.sh --quick`: all 170 cases IDENTICAL in 13 areas, no difference, no error (r23_24 left the quick set for r23_09). Clippy `-D warnings --all-targets` is clean natively and on both wasm targets.
+
+## What Y2d / Y3 need
+
+- **Y2d:** the resize frame's resource creation (the game remakes far more inside its YEBIS init: 1542 vs
+  770 `CreateBuffer`, 50 vs 13 RTVs); the auto-exposure-off path (no luminance step is drawn, unproven:
+  `shortcut:` in `yebis.rs`); `PostProcessEffectsUpdater`'s per-frame update; the game keeps its FXAA
+  target at the old size on resize while the port remakes it; render_oracle's 27 old clippy errors
+  (`--all-targets`, from before Y2c).
+- **Y3 (VR and triple with YEBIS):** YEBIS per eye / per screen: the targets and the luminance history
+  are per `Yebis` today, sized to one view. VR's two eyes and triple's three viewports need either one
+  `Yebis` per view or the game's own sharing, found in its VR/triple camera classes, plus oracle runs
+  with `--vr` / `--triple` and `--post`.
+
+## Not done
+
+- Glare, depth of field, rays of god and heat shimmer (filters with them are refused).
+- YEBIS in the graphics preset (post-processing stays off, decided) and in the browser (stand-in until Y4).
+
+# Task Y2b: YEBIS's 8 draws on the desktop, proven against the game
+
+## Resume here
+
+- **Done, released as v0.48.0.** `crates/rustyac-render/src/yebis.rs` draws YEBIS's frame (both rounds and
+  the composite) on Direct3D 11. `CameraForwardYebis::start_yebis` (`post.rs`) reads it from the player's
+  `acs.exe` and the ppfilter named in video.ini. `rustyac.exe --post 1` and `render_oracle --post` with
+  `RENDER_ORACLE_YEBIS=1` use it. Without `start_yebis` (wgpu, the browser, the proofs' default rows) the
+  plain-copy stand-in stays.
+- Next is **Task Y2c** (leftovers below), then Y3 (eye adaptation) and the rest of the Y1 plan.
+- Check one scene: `bash re/scratch/taskY2b/cmp.sh r23_09 out --track spa --view chase --post` (also
+  r23_10 with `--aa 4`, r23_16 with `--track monza --ldr-levels`). It writes `re/scratch/taskY2b/out.txt`.
+- Test: `cargo test --locked -p rustyac-render --lib yebis`. The uploads test reads the game logs in
+  `re/scratch/taskY2b/runs/` (git-ignored) and skips without them.
+
+## What it found
+
+1. **All three scenes are IDENTICAL**: call log with no ignored bit, and pixels.
+2. **The planted change is caught.** A tone-map vignette 1% larger makes r23_09 DIFFERENT.
+3. **YEBIS reads two surfaces in turn.** Its render-texture array (`CPostEffect`+0x100) holds 2 effect
+   surfaces. A draw never reads the surface it writes, because Direct3D 11 unbinds such a read and it
+   returns 0. Each round tone-maps into its own 8-bit target. The composite reads round 1's colour (slots
+   0-2) and round 2's alpha (slots 3-5).
+4. **The vertex ring** is `CTextureUtil`'s 768 dynamic buffers of 192 bytes. A draw goes to the next
+   buffer when it would reach byte 192. Only the wrap past buffer 767 is a real discard; every other map is
+   `NO_OVERWRITE`. This is why each wrap in the log shows a buffer of zeros plus the new vertices.
+5. **The dither** is `CTextureUtil::InitializeDevice` 0x1403e6890's 4x4 Bayer texture. **The noise** is
+   four linear congruential states (seeds 1, 0x3391, 0x61e9b, 0xbf1), stepped once a frame from the
+   second frame on; both tone maps of a frame use the same values.
+6. **The screen after start.** `initPostProcessing` leaves the back buffer bound without depth, outside
+   kgl's cache. The port does the same, and the static cube map's first `OMSetRenderTargets` then matches.
+7. **Draw 8's alpha sign.** The game's composite weight is -0 while `CRenderGlare`+0x108 is set. The
+   oracle zeroes it (`differences.md`, Repeatability), so the Y2a test needs no mask either.
+
+| Scene | Call log | Pixels |
+|---|---|---|
+| r23_09 spa chase | IDENTICAL | IDENTICAL |
+| r23_10 spa chase MSAA 4 | IDENTICAL | IDENTICAL |
+| r23_16 monza chase, LDR levels | IDENTICAL | IDENTICAL |
+| r23_09 with the planted change | DIFFERENT (2 lines: the draw 4 vertex upload) | DIFFERENT (6300 pixels, by 1) |
+
+`tools/proofs/run_all.sh --quick` (post-processing rows without YEBIS): all 170 cases IDENTICAL in 13 areas, no difference, no error (browser and ai_page ran again alone: the first run's page build got a second `--sysroot` from the check script's own environment, not from the port).
+
+## What Y2c / Y3 need
+
+- **Y2c:** run the proofs' `--post` rows with YEBIS on too (`RENDER_ORACLE_YEBIS=1` as a row option).
+  Put YEBIS on in the graphics preset and drop the stand-in once the rest is ported. Cover a second
+  ppfilter, more than one frame (the luminance draw only shows from frame 2), and a window resize (the
+  targets are made once, at start).
+- **Y3:** eye adaptation (`UpdateAutoExposure`). Today exposure is the filter's maximum and the luminance
+  target is drawn but never read back.
+- **Not on wgpu / the web.** YEBIS needs Direct3D 11 bytecode, so the browser keeps the stand-in until
+  the shaders have a route there (no translated shaders are shipped).
+
+## Not done
+
+- Glare, depth of field, rays of god and heat shimmer: `PostEffect::new` refuses a filter that turns them on.
+- Only the first two frames' order is proven (the oracle logs one frame).
+
+# Task Y2a: YEBIS's settings block and constant buffer, byte for byte
+
+## Resume here
+
+- **Both steps are done** (`crates/rustyac-render/src/yebis_cb.rs`). Next is Task Y2b: the device layer and
+  the 8 draws, proven with log + pixels, then release v0.48.0.
+- `PostEffect::new(ppfilter, video.ini, Camera)` builds the `CPostEffect` fields this chain reads, the way
+  `CameraForwardYebis::setPostProcessing` 0x140025080 fills them. `round_two()` gives what
+  `PFXALPHAOUT_EFFECTRESULT_ALPHA` forces in the second round.
+- `Cbuffer::frame(pe, filmic, used)` returns one frame's 8 uploads (4096 bytes each). `Cbuffer` is YEBIS's
+  global parameter store, so the store carries over between draws and frames. The game's logged frame is the
+  second one from a fresh store.
+- `filmic_table(acs.exe bytes)` reads the 21-float filmic curve from the player's `acs.exe` (file offset
+  0x527cc0) at run time. It is not in the repo.
+- Test: `cargo test -p rustyac-render --lib yebis_cb -- --nocapture`. It skips without an install or without
+  the oracle logs in `re/scratch/taskY2a/runs/` (git-ignored). Those logs come from
+  `RENDER_ORACLE_YEBIS=1 render_oracle run --side ac ... --post` (r23_09, r23_10, r23_16).
+- No version, no tag (v0.48.0 comes with Y2b).
+
+## What it found
+
+1. **All 24 uploads are IDENTICAL** to the game's, byte for byte (3 scenes x 8 draws). The only bytes
+   masked are the sign of draw 8's alpha (see question 2).
+2. **The planted change is caught.** With `[COLOR] SATURATION` 0.95 -> 0.9, draw 4 (the tone map with the
+   colour matrix) differs, and only draw 4.
+3. **What an upload holds.** YEBIS zeroes 4096 bytes, then copies every variable that the draw's vertex and
+   pixel programs mark used (`D3D_SVF_USED`, flag 2), from one global store. The copy runs to the end of
+   the variable's register: the 8-byte `fParam_DepthCastScaleOffset` goes up with its register's .zw, which
+   holds `+0x410`'s other half. Because nothing else is cleared, draws carry over values from earlier
+   draws and from the last frame. For example, the CA's 5-tap weights show up in every later Modulate.
+4. **What the frame's settings come to with `default.ini`:**
+   - exposure is the auto-exposure MAX (0.5)
+   - gamma 1.2
+   - `FUNCTION=-1` becomes the filmic curve (`PFXTM_FILMIC`, id 10)
+   - mapping 32
+   - the colour matrix is Saturation(0.95) x ColorTemperature(6400) x WhiteBalance(6400)
+   - CA 5 samples
+   - the depth factor is (-64000, 0) for near 1, far 1000
+
+   Round two forces exposure, gamma and mapping to 1, the tone map to `LINEARSAT` (id 1) and the colour
+   matrix to the identity.
+5. **The CA source rect is in texture coordinates** (1 x 1), not pixels. Its matrices depend on the
+   aspect ratio and the dispersion only, not the render size.
+
+| Scene | 1 depth | 2 CA | 3 luminance | 4 tone map | 5 depth | 6 CA | 7 tone map | 8 composite |
+|---|---|---|---|---|---|---|---|---|
+| r23_09 spa chase | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL |
+| r23_10 spa chase MSAA 4 | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL |
+| r23_16 monza chase | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL | IDENTICAL |
+
+## What Y2b needs that this didn't do
+
+- **Where the used ranges come from.** The test reads them from the real container with `rustyac-dxbc`.
+  rustyac-dxbc is only an optional or dev dependency of rustyac-render, so the runtime path has to pick
+  one: always link it, or carry the 7 techniques' ranges as a table.
+- **A caller.** Nothing in `post.rs` or the oracle builds a `PostEffect` yet. `Camera` takes near, far,
+  fov and size; the game's values come from `updateYebisParameters` 0x140029e30 (far clamped to [1, 1000]).
+- **The device layer:** the state cache, the target pool, the ring offsets and the draws themselves.
+
+## Not done
+
+- **Settings this frame does not read (later tasks):** glare, DOF, light shafts, heat shimmer, lens
+  distortion, feedback, vignette simulation, HUE and SEPIA, colour temperatures under 4000 K, and tone-map
+  functions other than 0, 1 and filmic. `PostEffect::new` refuses these with an error rather than guessing.
+- **Auto exposure over time (Y3).** Exposure is taken as settled at MAX, as in the oracle's frames (a
+  `shortcut:` comment marks it).
+- **No `run_all.sh`:** no proof area runs this code yet.
+
+## Open questions
+
+1. The CA weights and the XYZ->sRGB matrix are code immediates, written as `f32::from_bits` constants (a few
+   dozen numbers, not code or bytecode). The filmic table is data in `.rdata` and is read at run time. Is that
+   the right line, or should the immediates be read from `acs.exe` too?
+2. Draw 8's alpha is `CRenderGlare+0x108` x 0 with the glare off. That field is never initialised, so the
+   game uploads +0 or -0 by chance (-0 in r23_09, +0 in r23_10 and r23_16). The test masks that one sign bit;
+   rustyAC writes +0. Y2b's pixel compare won't see it, but a strict log compare will.
+
+# Task Y2: YEBIS's shader container read; the frame chain stopped at step 2 (rule 7)
+
+## Resume here
+
+- **Step 1 is done** (`crates/rustyac-render/src/yebis_tfxo.rs`). **Steps 2-4 were not started**: see "Why
+  step 2 stopped". Super decides the split below (Y2a / Y2b / Y2c) before work goes on.
+- `Tfxo::from_install(ac_root)` reads `acs.exe` from the player's install at run time and finds the
+  container (`.tfxo file` magic, `hlsl` at +0x38). `technique("<name>")` gives the vertex and pixel programs
+  of `tech_<name>`. Nothing of the container is in the repo, a release or the web pack.
+- Test `cargo test -p rustyac-render --lib yebis_tfxo` (skips without an install): 2,649 programs, 2,653
+  techniques, and the 7 techniques of the default frame hash to exactly the shaders the Y1 log shows bound.
+- PPFX pseudo-C (git-ignored): 2,162 functions in `re/decomp/GPU*/`, `re/decomp/ppfx/`, `TinyEffect/`,
+  indexed in `re/decomp/INDEX.tsv`. They come from `re/index/publics.tsv` (not `functions.tsv`), so plain
+  `tools/bulk_decomp.py` finds none; the copy that works is `re/scratch/taskY2/decomp_ppfx.py --libs
+  ppfx_dx11_x64.lib --match '^PPFX::'`.
+- No version, no tag: the task is not finished.
+
+## What Y2 found
+
+1. **The 8 draws by name** (now in `docs/atlas/yebis.md` s8): 1 / 5 depth factor into the effect alpha
+   (`MadAlphaColorT2_R_S1`, `DepthOfField_BlurFactorAlphaFromDepthTextureTypeCast...`); 2 / 6 camera
+   motion blur (`TransformMadT1_S5`, a 5-tap zoom driven by the camera's movement since the last frame);
+   3 the luminance measurement (`UpdateAutoExposure` -> `TonemapToSurface`, `TonemapHDR_Exposure`); 4 / 7
+   the tone map (`DrawRectGPU_TonemapHDR` 0x1403f1b10, 36 parameters); 8
+   `CompositeColorAndAlphaEffectsMask_A_A`.
+2. **Y1 question 2, why two rounds:** AC initialises YEBIS with `PFXALPHAOUT_EFFECTRESULT_ALPHA`
+   (`CameraForwardYebis::initPostProcessing` 0x140024ca0, also `YebisPP::initPP`). In that mode
+   `EndPostEffectScene_Process` 0x1403b84d0 calls `EndPostEffectScene_InternalProcess` 0x1403b5f40 twice,
+   the second time with exposure, colour matrix and related fields saved and forced to 1 / 0, and then
+   composites colour and alpha mask (draw 8). It is not temporal. The two 1x1 textures are constants
+   (black, grey 7f7f7f7f, white), not exposure history.
+3. **Y1 question 3, the QUALITY rule:** `CameraForwardYebis::initRenderTargets` 0x140029a90 computes
+   `(int)(QUALITY / 5.0 * width)`, 0 -> `min(width, 640)`, into `PFX_INITPARAM::m_uiEffectBufferCriterionWidth`
+   (+0x3c). That only sizes the glare, DOF, motion-blur and AO sub-buffers (their `*WidthScale`). The effect
+   buffer is `m_uiEffectBufferWidth` = 0 = the render size. So Y1's measurement (1280x720) is right and the
+   map's section 3 wording was wrong; fixed.
+
+## Why step 2 stopped (usage rule 7)
+
+Step 2 asks for the parameter block and the 4 KB constant buffer value for value. Reading the code that
+fills it shows it is not a block of maths but most of YEBIS's frame driver:
+`EndPostEffectScene_InternalProcess` alone is 1,176 lines of pseudo-C, plus `Process`, `PreProcess`,
+`UpdateParameters_Base`, `UpdateAutoExposure` with `CTextureLuminanceManage`, the depth-factor and
+motion-blur passes, `TonemapToSurface` (2,958 bytes) and `DrawRectGPU_TonemapHDR`, the composite, and under
+all of it the `IGPUDevice` state cache that decides which Direct3D calls are made, the render-target pool,
+the vertex-buffer ring offsets and the constant-buffer leftovers, all of which carry over between frames.
+About 50 KB of machine code. Step 4's tape scenes (r23_11..14) also need the camera motion and exposure
+over several frames. That is a new subsystem, bigger than the 4-5 h Y1 guessed for the whole of Y2.
+
+**Proposed split** (estimate 3-4 sessions in all):
+
+| Task | Scope | Proof |
+|---|---|---|
+| **Y2a** | parameter block (video.ini + `ppfilters/default.ini` -> `CPostEffect`) and the per-draw constant buffer CPU maths | constant buffer bytes value for value against the Y1 log, single frames |
+| **Y2b** | the device layer (state cache, target pool, ring offsets), the oracle `compare --post` with `RENDER_ORACLE_YEBIS` on both sides, the 8 draws | log + pixels IDENTICAL on r23_09, r23_10, r23_16; `run_all.sh --quick`; release v0.48.0 |
+| **Y2c** (or folded into Y3) | camera motion and exposure over time for the tape scenes | r23_11..r23_14 |
+
+**Plan Y3-Y7:** unchanged in order. Y3 shrinks: "the second round" is answered (not temporal), so Y3 is
+auto exposure over time plus the VR / triple per-eye call. Total stays 7-9 tasks, Y2 now 2-3 of them.
+
+## Not done
+
+- Steps 2, 3 and 4: no parameter block, no constant buffer, no compare mode, no ported draw.
+- No `run_all.sh --quick`: the only code is a reader with its own test, not on any proof path.
+- Release v0.48.0 and its tag.
+
+## Open questions
+
+1. Super: take the Y2a / Y2b / Y2c split, or keep Y2 as one task and accept 3-4 sessions?
+2. (From Y1, still open) does the page read the player's `acs.exe` already, or does the pack step need it?
+
+# Task Y1: YEBIS mapped, a plan (the first pass is not ported yet)
+
+## Resume here
+
+- Steps 1 and 2 are done; **step 3 (port the first pass) was not started**, on purpose: see "Why step 3
+  stopped". Super decides whether Y1's step 3 becomes Task Y2 as planned below.
+- The map is `docs/atlas/yebis.md` (Task 23's `docs/map/yebis.md`, moved, with section 8 new: what one frame
+  really draws, measured).
+- New tool switch: `RENDER_ORACLE_YEBIS=1` on `render_oracle run --side ac ... --post` keeps the real YEBIS on
+  the game's side; its Direct3D calls are in the `.gpulog`. Without it nothing changed (the stand-in copy).
+- Raw logs (git-ignored): `re/scratch/taskY1/y1/` (real YEBIS), `y0/` (stand-in), `sum.awk` (one line per
+  YEBIS draw: `awk -f re/scratch/taskY1/sum.awk <frame>.ac.gpulog`).
+- No version, no tag: the task is not finished.
+
+## What Y1 found
+
+1. **The real YEBIS runs inside the oracle on WARP** and every call of it is logged. That makes YEBIS a normal
+   rustyAC port job: log plus pixels against the game, the same proof as every renderer task since 20. Task
+   23 thought it needed the two patches taken out "and compared against the real thing"; that part now works.
+2. **With the oracle's profile (filter `default`, glare off, QUALITY 0) a frame is only 8 full-screen draws**,
+   6 pixel shaders and 4 vertex shaders out of the container's 2,649, one 4096-byte constant buffer, a 128x64
+   luminance target and full-size RGBA16F / RGBA8 targets. Table in `docs/atlas/yebis.md` section 8.
+3. The pass order of `EndPostEffectScene_InternalProcess` from Task 23 is confirmed by the call index.
+4. Correction to the Task 23 map: at QUALITY 0 the effect buffer is the full 1280x720, not 640 wide.
+
+## Why step 3 stopped (usage rule 7)
+
+"Port the first pass" cannot be proven alone: the game's picture is the whole 8-draw chain, so the smallest
+pixel proof is all of it. That needs three things rustyAC does not have: a reader for YEBIS' shader container
+in the player's `acs.exe`, the CPU side that fills the 4096-byte constant buffer per draw (tone-map,
+exposure and colour-matrix maths from `CPostEffect`), and the oracle mode that compares both sides with
+YEBIS on. Together that is a new subsystem of about one full task (desktop) plus a page part, not a step.
+
+## The plan: Y2 ...
+
+Each task ends with a picture proven against the game: `render_oracle compare ... --post` with
+`RENDER_ORACLE_YEBIS=1` on the game's side, log IDENTICAL and pixels IDENTICAL, on the r23_09..r23_16 scenes
+of `tools/proofs/render_list.txt` (spa, monza, imola, cockpit / chase / gate, MSAA 2 and 4, FXAA, tapes).
+
+| Task | Scope | Size | Proof |
+|---|---|---|---|
+| **Y2** Container + the default chain, desktop | read the `.tfxo` container out of the player's `acs.exe` at run time (magic `.tfxo file`, `hlsl` at +0x38, `docs/atlas/yebis.md` s4); name the 10 logged programs; port the parameter block (video.ini + `ppfilters/default.ini` -> `CPostEffect` state) and the 8 draws with their constant buffers, exposure fixed by the filter; oracle: `compare --post` takes `RENDER_ORACLE_YEBIS` on both sides | 1 task (~4-5 h) | log + pixels, r23_09, r23_10, r23_16, one tape |
+| **Y3** Auto exposure over time + the second round | the luminance read-back (one frame late), exposure adaptation, the 1x1 history textures, whatever round 5-8 is; the exposure apps and per-view exposure then change the picture | 1 task | 60-frame sequences, r23_11..r23_14 |
+| ~~**Y4** The page~~ (dropped 2026-11-12: YEBIS stays desktop only; the browser draws without post-processing and its settings say "(desktop only)". Why (Super): the browser page is already slow at times with the Debug renderer, and YEBIS's extra full-screen passes would make it worse; the page keeps its stand-in. A scope choice, not something the game forces, so not a `differences.md` entry) | the same chain on wgpu: programs read from the player's `acs.exe` at load and translated by the existing DXBC path (`rustyac-dxbc`, `shader_table`, `shader_proof` on SwiftShader); `frameProof` with post on | 1 task | shader_proof on the 10 programs, page frame vs desktop |
+| **Y5** Glare and light shafts | `GLARE` 1..5, `RAYS_OF_GOD`, `[GLARE]` / `[GODRAYS]` sections | 1-2 tasks | log + pixels with GLARE on, sun views |
+| **Y6** Depth of field | `DOF`, `[DOF]`, auto focus, photo mode and the cinematic camera | 1-2 tasks | log + pixels with DOF on, photo views |
+| **Y7** The rest | heat shimmer (volumes from `PostProcessEffectsUpdater`), lens distortion, chromatic aberration, vignette, film grain, switching filters at run time (`PostProcessFilterSelector`), every shipped `ppfilters/*.ini` once | 1 task | log + pixels per filter |
+
+Total: 7-9 tasks. Desktop only (Y4, the page, dropped 2026-11-12).
+
+**VR and triple screen.** `StereoCameraForward::renderYebis` 0x140213b10 calls `YebisPP::applyPostProcessing`
+0x14002bb70, the same library with the same context, once per eye; `YebisPP::readPPSet` is a near copy of
+`CameraForwardYebis::readPPSetOptions`. So the chain becomes one Rust function (source, depth,
+destination, parameters) that `post.rs` calls once and the VR / triple cameras (`vr.rs`, `oculus.rs`,
+`triple.rs`) call per eye / screen, plus a port of `YebisPP`'s own parameter code. It fits at the end of Y3
+(after exposure, which is per camera) and is proven with the 47b/47c `--vr` / `--triple` rows.
+
+**Where the page gets the shaders.** As for the game's own shaders since Task 38: never shipped, translated
+in the page at load. The difference: they are inside `acs.exe`, not in `system/shaders`. The page needs the
+container's 15 MB from the player's `acs.exe` (open question 1).
+
+## Open questions
+
+1. Does the page already have the player's `acs.exe` (in the content it reads from the install), or does the
+   web pack step have to start carrying a read of it? This decides whether the preview pack gains a file.
+2. Why YEBIS draws two rounds of 4 in one frame, and what its two 1x1 textures hold.
+3. The QUALITY rule (section 8 of the map contradicts section 3).
+
+## Not done
+
+- Step 3: no YEBIS pass is ported, on the desktop or the page.
+- No proof run (`run_all.sh --quick`): the only code change is an opt-in switch of the oracle; the default
+  path was run once after the change (`re/scratch/taskY1/y0/`).
+- Release v0.48.0 and its tag: left for when the first pass is in.

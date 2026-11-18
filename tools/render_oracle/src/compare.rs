@@ -1,0 +1,269 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Both sides of a frame, each in a process of its own (the game's objects are never destroyed,
+//! and one process has one command log), and the comparison: the frame's command logs line by
+//! line, the start-up logs by the calls that make state, and the pictures byte by byte.
+
+use std::process::Command;
+
+use crate::Args;
+
+/// The calls of the start-up that are compared: what makes state objects, views and textures.
+/// (The game's start-up also makes a timer query and the buffers of its 2D drawing, and the
+/// two sides load models and textures through different paths.)
+fn state_lines(log: &[u8]) -> Vec<&[u8]> {
+    log.split(|b| *b == b'\n')
+        .filter(|l| {
+            [&b"dev.CreateBlendState"[..], b"dev.CreateDepthStencilState", b"dev.CreateRasterizerState", b"dev.CreateSamplerState", b"RSSetState", b"PSSetSamplers", b"RSSetViewports"].iter().any(|p| l.starts_with(p))
+        })
+        .collect()
+}
+
+/// A line without its payload of bytes: the call and the names of what it uses, with every
+/// run of 16 or more hex digits cut out (for a first, loose look at the structure of a frame).
+fn loose(line: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(line.len());
+    let mut run = 0usize;
+    for &b in line {
+        if b.is_ascii_hexdigit() {
+            run += 1;
+        } else {
+            if run >= 16 {
+                out.truncate(out.len() - run);
+                out.push(b'#');
+            }
+            run = 0;
+        }
+        out.push(b);
+    }
+    if run >= 16 {
+        out.truncate(out.len() - run);
+        out.push(b'#');
+    }
+    out
+}
+
+pub fn show(line: &[u8]) -> String {
+    let text = String::from_utf8_lossy(line);
+    if text.len() > 300 {
+        format!("{} … ({} bytes)", &text[..300], text.len())
+    } else {
+        text.into_owned()
+    }
+}
+
+/// Where two byte payloads of one call first differ: the offset in the buffer.
+pub fn payload_difference(a: &[u8], b: &[u8]) -> Option<String> {
+    let last = |l: &[u8]| l.rsplit(|c| *c == b' ').next().map(|s| s.to_vec()).unwrap_or_default();
+    let (pa, pb) = (last(a), last(b));
+    if pa.len() != pb.len() || pa.len() < 16 {
+        return None;
+    }
+    let mut offsets = Vec::new();
+    for i in (0..pa.len()).step_by(8) {
+        let end = (i + 8).min(pa.len());
+        if pa[i..end] != pb[i..end] {
+            offsets.push(format!("+{:#x}: {} / {}", i / 2, String::from_utf8_lossy(&pa[i..end]), String::from_utf8_lossy(&pb[i..end])));
+        }
+    }
+    Some(format!("{} of {} words differ (game / port): {}", offsets.len(), pa.len() / 8, offsets.iter().take(12).cloned().collect::<Vec<_>>().join(", ")))
+}
+
+/// Both sides, a process each.
+fn run_sides(args: &Args, dump: &[usize]) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut children = Vec::new();
+    for side in ["ac", "port"] {
+        let mut command = Command::new(&exe);
+        command.arg("run").arg("--side").arg(side).arg("--acs").arg(&args.acs).arg("--root").arg(&args.root).args(&args.frame_options);
+        if !dump.is_empty() {
+            command.arg("--dump").arg(dump.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(","));
+        }
+        if args.verbose {
+            command.arg("--verbose");
+        }
+        if args.serial {
+            let status = command.status().map_err(|e| e.to_string())?;
+            if !status.success() {
+                return Err(format!("the {side} side failed ({status})"));
+            }
+        } else {
+            children.push((side, command.spawn().map_err(|e| e.to_string())?));
+        }
+    }
+    for (side, mut child) in children {
+        let status = child.wait().map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err(format!("the {side} side failed ({status})"));
+        }
+    }
+    Ok(())
+}
+
+pub fn compare(args: &Args) -> Result<(), String> {
+    run_sides(args, &args.dump)?;
+    let frame = crate::frames::build(args)?;
+    let read = |side: &str, kind: &str| {
+        let path = args.out.join(format!("{}.{side}.{kind}", frame.name));
+        std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+    };
+    let mut failed = false;
+
+    // Task 47: the triple camera's matrices of each screen
+    if let (Ok(ta), Ok(tp)) = (read("ac", "triple"), read("port", "triple")) {
+        if ta == tp {
+            println!("triple screens: {} matrices, the same on both sides", ta.iter().filter(|b| **b == 10).count());
+        } else {
+            println!("triple screens: the matrices are DIFFERENT\n--- ac\n{}--- port\n{}", String::from_utf8_lossy(&ta), String::from_utf8_lossy(&tp));
+            failed = true;
+        }
+    }
+
+    // Task 47b: the stand-in OpenVR runtime's calls and the VR camera's matrices of each frame
+    if let (Ok(va), Ok(vp)) = (read("ac", "vr"), read("port", "vr")) {
+        let (va, vp) = (String::from_utf8_lossy(&va), String::from_utf8_lossy(&vp));
+        match va.lines().zip(vp.lines()).position(|(a, p)| a != p) {
+            None if va.lines().count() == vp.lines().count() => println!("VR: {} runtime calls and matrices, the same on both sides", va.lines().count()),
+            at => {
+                let at = at.unwrap_or(va.lines().count().min(vp.lines().count()));
+                println!("VR: DIFFERENT at line {}\n  ac:   {}\n  port: {}", at + 1, va.lines().nth(at).unwrap_or("(end)"), vp.lines().nth(at).unwrap_or("(end)"));
+                failed = true;
+            }
+        }
+    }
+
+    // the start-up: state objects, samplers
+    let (init_ac, init_port) = (read("ac", "init.gpulog")?, read("port", "init.gpulog")?);
+    let (sa, sp) = (state_lines(&init_ac), state_lines(&init_port));
+    if sa == sp {
+        println!("start-up: {} state calls, the same on both sides", sa.len());
+    } else {
+        failed = true;
+        println!("start-up: DIFFERENT ({} state calls of the game, {} of the port)", sa.len(), sp.len());
+        for (i, (a, b)) in sa.iter().zip(sp.iter()).enumerate() {
+            if a != b {
+                println!("  first difference at state call {i}:\n    game: {}\n    port: {}", show(a), show(b));
+                break;
+            }
+        }
+    }
+
+    // the one-time render of the reflection cube map
+    let (cube_ac, cube_port) = (read("ac", "cube.gpulog")?, read("port", "cube.gpulog")?);
+    let cube_lines = cube_ac.iter().filter(|b| **b == b'\n').count();
+    let cube_draws = cube_ac.split(|b| *b == b'\n').filter(|l| l.starts_with(b"Draw")).count();
+    if cube_ac == cube_port {
+        println!("static cube map: {cube_lines} calls, {cube_draws} draws, the same on both sides");
+    } else {
+        failed = true;
+        let (la, lp): (Vec<&[u8]>, Vec<&[u8]>) = (cube_ac.split(|b| *b == b'\n').collect(), cube_port.split(|b| *b == b'\n').collect());
+        println!("static cube map: DIFFERENT ({} calls of the game, {} of the port)", la.len() - 1, lp.len() - 1);
+        for i in 0..la.len().max(lp.len()) {
+            let (a, b) = (la.get(i).copied().unwrap_or(b"<end>"), lp.get(i).copied().unwrap_or(b"<end>"));
+            if a != b {
+                println!("  first difference at line {i}:\n    game: {}\n    port: {}", show(a), show(b));
+                if let Some(detail) = payload_difference(a, b) {
+                    println!("    {detail}");
+                }
+                break;
+            }
+        }
+    }
+
+    // a sequence: the hashes of every frame; the first frame that differs is run again and
+    // looked at whole
+    let mut kind = (String::from("gpulog"), String::from("rgba"));
+    if frame.sequence {
+        let (seq_ac, seq_port) = (String::from_utf8_lossy(&read("ac", "seq")?).into_owned(), String::from_utf8_lossy(&read("port", "seq")?).into_owned());
+        let (la, lp): (Vec<&str>, Vec<&str>) = (seq_ac.lines().collect(), seq_port.lines().collect());
+        let field = |line: &str, key: &str| line.split(' ').find_map(|w| w.strip_prefix(key).map(|v| v.to_string())).unwrap_or_default();
+        let number = |line: &str, key: &str| field(line, key).parse::<u64>().unwrap_or(0);
+        let calls: u64 = la.iter().map(|l| number(l, "calls=")).sum();
+        let draws: u64 = la.iter().map(|l| number(l, "draws=")).sum();
+        let (cmin, cmax) = (la.iter().map(|l| number(l, "calls=")).min().unwrap_or(0), la.iter().map(|l| number(l, "calls=")).max().unwrap_or(0));
+        println!("sequence {}: {} frames of the game, {} of the port; {calls} calls ({cmin} to {cmax} a frame) and {draws} draws of the game", frame.name, la.len(), lp.len());
+        let log_bad = (0..la.len().max(lp.len())).find(|i| match (la.get(*i), lp.get(*i)) {
+            (Some(a), Some(b)) => field(a, "log=") != field(b, "log=") || field(a, "calls=") != field(b, "calls="),
+            _ => true,
+        });
+        let pixel_bad = (0..la.len().max(lp.len())).find(|i| match (la.get(*i), lp.get(*i)) {
+            (Some(a), Some(b)) => field(a, "pixels=") != field(b, "pixels="),
+            _ => true,
+        });
+        let different_logs = (0..la.len().min(lp.len())).filter(|i| field(la[*i], "log=") != field(lp[*i], "log=")).count();
+        let different_pixels = (0..la.len().min(lp.len())).filter(|i| field(la[*i], "pixels=") != field(lp[*i], "pixels=")).count();
+        if log_bad.is_none() && pixel_bad.is_none() {
+            println!("command log: IDENTICAL in all {} frames", la.len());
+            println!("pixels: IDENTICAL in all {} frames", la.len());
+            if failed {
+                return Err(format!("{}: the port does not match the game", frame.name));
+            }
+            return Ok(());
+        }
+        let first = log_bad.or(pixel_bad).unwrap_or(0);
+        let index: usize = la.get(first).or(lp.get(first)).and_then(|l| l.split(' ').next()).and_then(|w| w.parse().ok()).unwrap_or(first);
+        println!("sequence: {different_logs} frames with a different command log, {different_pixels} with different pixels; the first is frame {index}:");
+        if !args.dump.contains(&index) {
+            // the redraw rewrites the hashes: keep the first pass's for a frame that differs only once
+            for side in ["ac", "port"] {
+                let seq = args.out.join(format!("{}.{side}.seq", frame.name));
+                std::fs::copy(&seq, seq.with_extension("first.seq")).map_err(|e| format!("{}: {e}", seq.display()))?;
+            }
+            run_sides(args, &[index])?;
+        }
+        kind = (format!("f{index}.gpulog"), format!("f{index}.rgba"));
+    }
+    // the frame
+    let (log_ac, log_port) = (read("ac", &kind.0)?, read("port", &kind.0)?);
+    let lines_ac: Vec<&[u8]> = log_ac.split(|b| *b == b'\n').collect();
+    let lines_port: Vec<&[u8]> = log_port.split(|b| *b == b'\n').collect();
+    let draws = |lines: &[&[u8]]| lines.iter().filter(|l| l.starts_with(b"Draw")).count();
+    let same = |a: &[u8], b: &[u8]| if args.loose { loose(a) == loose(b) } else { a == b };
+    let mut first = None;
+    let mut differing = 0usize;
+    for i in 0..lines_ac.len().max(lines_port.len()) {
+        let (a, b) = (lines_ac.get(i).copied().unwrap_or(b"<end>"), lines_port.get(i).copied().unwrap_or(b"<end>"));
+        if !same(a, b) {
+            differing += 1;
+            if first.is_none() {
+                first = Some(i);
+            }
+        }
+    }
+    println!("frame {}: {} calls and {} draws of the game, {} calls and {} draws of the port", frame.name, lines_ac.len() - 1, draws(&lines_ac), lines_port.len() - 1, draws(&lines_port));
+    match first {
+        None => println!("command log: IDENTICAL{}", if args.loose { " (loose: without the payloads)" } else { "" }),
+        Some(i) => {
+            failed = true;
+            println!("command log: DIFFERENT in {differing} lines, first at line {i}:");
+            for j in i.saturating_sub(4)..i {
+                println!("     {j}: {}", show(lines_ac.get(j).copied().unwrap_or(b"")));
+            }
+            let (a, b) = (lines_ac.get(i).copied().unwrap_or(b"<end>"), lines_port.get(i).copied().unwrap_or(b"<end>"));
+            println!("  game {i}: {}", show(a));
+            println!("  port {i}: {}", show(b));
+            if let Some(detail) = payload_difference(a, b) {
+                println!("  {detail}");
+            }
+            for j in i + 1..(i + 4).min(lines_ac.len().max(lines_port.len())) {
+                println!("  game {j}: {}", show(lines_ac.get(j).copied().unwrap_or(b"<end>")));
+                println!("  port {j}: {}", show(lines_port.get(j).copied().unwrap_or(b"<end>")));
+            }
+        }
+    }
+
+    // the pictures
+    let (px_ac, px_port) = (read("ac", &kind.1)?, read("port", &kind.1)?);
+    if px_ac == px_port {
+        println!("pixels: IDENTICAL ({} bytes)", px_ac.len());
+    } else {
+        failed = true;
+        let differing = px_ac.chunks(4).zip(px_port.chunks(4)).filter(|(a, b)| a != b).count();
+        let worst = px_ac.iter().zip(px_port.iter()).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap_or(0);
+        println!("pixels: DIFFERENT in {differing} of {} pixels, largest channel difference {worst}", px_ac.len() / 4);
+    }
+    if failed || frame.sequence {
+        return Err(format!("{}: the port does not match the game", frame.name));
+    }
+    Ok(())
+}

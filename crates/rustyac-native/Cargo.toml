@@ -1,0 +1,25 @@
+[package]
+name = "rustyac-native"
+description = "rustyAC on macOS and Linux: a winit window and a wgpu surface (Metal, Vulkan) around the same game loop the browser build runs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "rustyac-play"
+path = "src/main.rs"
+
+# Everything is for macOS and Linux; on Windows the game is rustyac.exe (Direct3D 11).
+[target.'cfg(all(unix, not(target_family = "wasm")))'.dependencies]
+rustyac-web = { path = "../rustyac-web" }
+rustyac-game = { path = "../rustyac-game" }
+rustyac-content = { path = "../rustyac-content" }
+rustyac-net = { path = "../rustyac-net" }
+rustyac-render = { path = "../rustyac-render", features = ["backend-wgpu"] }
+winit = "0.30"
+# the debug panel (F10), drawn over the game
+egui = { version = "0.37", default-features = false, features = ["default_fonts"] }
+egui-wgpu = { version = "0.37", default-features = false }
+egui-winit = { version = "0.37", default-features = false }

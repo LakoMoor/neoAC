@@ -1,0 +1,593 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Render oracle: Assetto Corsa's own renderer (run from acs.exe in this process, on a WARP
+//! device, off screen) against the Rust port in `crates/rustyac-render`.
+//! See `docs/port/renderer_core.md`.
+// Game-shaped calls and tables, and `!(a >= b)` kept for its NaN case, as in the ported crates
+#![allow(clippy::too_many_arguments, clippy::type_complexity, clippy::neg_cmp_op_on_partial_ord)]
+
+#[allow(dead_code)]
+#[path = "../../car_oracle/src/acs.rs"]
+mod acs;
+mod ac;
+mod ac_car;
+mod boundaries;
+mod compare;
+mod frames;
+mod oculus_fake;
+mod openvr_fake;
+mod gui_ac;
+mod gui_ac_modes;
+mod gui_port_modes;
+mod gui_ac2;
+mod gui_ac_apps;
+mod gui_ac_hud;
+mod gui_ac_hud2;
+mod gui_ac_hud3;
+mod gui_ac_esc;
+mod gui_ac_menu;
+mod gui_ac_pit;
+mod gui_ac_race;
+mod gui_ac_replay;
+mod gui_ac_setup;
+mod gui_compare;
+mod gui_port;
+mod gui_py;
+mod gui_port2;
+mod gui_port3;
+mod gui_port_apps;
+mod gui_port_hud;
+mod gui_port_hud2;
+mod gui_port_hud3;
+mod gui_port_menu;
+mod gui_port_pit;
+mod gui_port_setup;
+mod gui_seq;
+mod gui_seq_apps;
+mod gui_seq_menu;
+mod gui_seq_setup;
+mod gui_seq_tele;
+mod gui_seq_console;
+mod text_fallback;
+mod port;
+mod root;
+
+use std::path::PathBuf;
+
+const USAGE: &str = "usage:
+  render_oracle run --side ac|port [frame options]   render one frame with one side; writes
+                                                     <out>/<frame>.<side>.gpulog / .init.gpulog / .png
+  render_oracle compare [frame options] [--loose] [--own-textures]    both sides (a process each), then the logs line
+                                                     by line and the pictures byte by byte
+     frame options: [--track <folder name>] [--layout <l>] [--view chase|cockpit|free|eyes|sun|far|side|rear|front] [--capture <n>]
+                    [--car <folder name> --pose <file> [--skin <folder name>]]
+                    a sequence: --car <c> --tape <file.audiotape> [--tape-from <frame>] [--frames <count>] (every
+                    frame from --capture on is compared; --dump <i,j> also writes those frames whole)
+                    [--set name=value[@frame],…] writes over the car's state (lights flash brake gas gear rpm kmh
+                    damage=f:r:l:r:c pit kers dirt fuel turbo water limiter)
+                    several cars: --tapes <prefix> (<prefix>.car<n>.audiotape of `car_oracle multi --audio-tape`)
+                    [--max-cars <n>] [--loaded <RaceManager::carsToBeLoaded>] [--set focus=<car>[@frame]] (the camera,
+                    the mirror and the dashboard follow the focused car) [--set alllights=1] (every car's headlights)
+                    other video.ini values than the Task 20 profile's: [--shadow-size <n>] [--cubemap-size <n>]
+                    [--world-detail <n>] [--anisotropic <n>] [--cubemap-faces <0..6>] [--cubemap-far <m>]
+                    [--aa <AASAMPLES>] [--post [--fxaa] [--motion-blur <0..12>] [--ldr-levels] [--ppfilter <name>]]: [POST_PROCESS] ENABLED=1, the game's
+                    CameraForwardYebis with YEBIS' ApplyEffects replaced by a plain copy on both sides
+                    [--sun <SUN_ANGLE, degrees; default -16>] [--weather <folder of content/weather; default 3_clear>]
+     common: [--acs <path to acs.exe>] [--root <scratch game folder>] [--out <folder>] [--size WxH] [--verbose]";
+
+pub fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("the repository root")
+}
+
+pub struct Args {
+    pub command: String,
+    pub acs: PathBuf,
+    pub game: PathBuf,
+    pub root: PathBuf,
+    pub out: PathBuf,
+    pub width: u32,
+    pub height: u32,
+    pub verbose: bool,
+    pub side: String,
+    pub track: Option<String>,
+    pub car: Option<String>,
+    pub skin: Option<String>,
+    pub pose: Option<PathBuf>,
+    /// a tape of `car_oracle run --audio-tape`: the game's own car states, 60 a second
+    pub tape: Option<PathBuf>,
+    pub tape_from: usize,
+    /// `--tapes <prefix>`: several cars, `<prefix>.car<n>.audiotape` of `car_oracle multi
+    /// --audio-tape` (each tape's header names its car); `--max-cars <n>` takes the first n,
+    /// `--loaded <n>` is `RaceManager::carsToBeLoaded` when it is not the number of cars
+    pub tapes: Option<PathBuf>,
+    /// `--poses <car>=<file.pose>,<car>=<file.pose>,…`: several cars, each standing as its pose
+    /// file has it (`render_oracle pose-of` cuts one out of a tape) in every frame
+    pub poses: Vec<(String, PathBuf)>,
+    pub max_cars: usize,
+    pub loaded: i32,
+    /// `--fade-at <frame>`: `ACCameraManager::fadeIn` with `Sim::cameraFadeTime` (the fade of a
+    /// change of the focused car) begins at that frame
+    pub fade_at: Option<usize>,
+    /// how many frames of the tape
+    pub frames: usize,
+    /// `--frames` was given (without a car: that many frames of the track alone)
+    pub frames_given: bool,
+    /// frames of a sequence whose whole log and picture are written (not only their hashes)
+    pub dump: Vec<usize>,
+    /// a word for the frame's name (to tell runs with different inputs apart)
+    pub label: String,
+    /// `--set name=value[@frame],…`: values written over the car's state of every frame (from
+    /// `frame` on), on both sides alike
+    pub set: Vec<(String, String, usize)>,
+    pub layout: String,
+    pub view: String,
+    pub capture: usize,
+    pub sun_angle: f32,
+    pub weather: String,
+    /// `--ghost <file.ghost>`: the ghost car of that file drives with the car; the car's lap
+    /// time is `--ghost-lap-ms <ms>` at the first frame and runs with the frames
+    pub ghost: Option<String>,
+    pub ghost_lap_ms: f64,
+    pub loose: bool,
+    /// `compare` runs the two sides one after the other
+    pub serial: bool,
+    /// the port reads textures with its own reader, not with d3dx11_43.dll
+    pub own_textures: bool,
+    /// `--car-data <folder>`: files laid over the car's data on both sides (a made-up test car):
+    /// a file of the folder replaces the data file of that name (`.png` / `.knh`: the loose file
+    /// of the car's folder), an empty file takes it away, and what is under `root/` goes into
+    /// the car's folder as it is
+    pub car_data: Option<PathBuf>,
+    /// `--time-mult <n>`: how fast the clouds drift (race.ini `TIME_MULT`)
+    pub time_mult: f32,
+    /// `--gui <sequence>`: the GUI oracle's script (see `gui_seq`); the game's fonts are started
+    pub gui: Option<String>,
+    /// the options of the frame, to hand on to the two child processes of `compare`
+    pub frame_options: Vec<String>,
+}
+
+fn parse() -> Result<Args, String> {
+    let mut list = std::env::args().skip(1);
+    let command = list.next().ok_or(USAGE)?;
+    let repo = repo_root();
+    let game = rustyac_content::install::ac_root().ok_or_else(rustyac_content::install::not_found_hint)?;
+    let mut a = Args {
+        command,
+        acs: game.join("acs.exe"),
+        game,
+        root: repo.join("re/scratch/render_oracle/root"),
+        out: repo.join("oracle/render"),
+        width: 1280,
+        height: 720,
+        verbose: false,
+        side: String::new(),
+        track: None,
+        car: None,
+        skin: None,
+        pose: None,
+        tape: None,
+        tape_from: 0,
+        tapes: None,
+        poses: Vec::new(),
+        max_cars: usize::MAX,
+        loaded: 0,
+        fade_at: None,
+        frames: 60,
+        frames_given: false,
+        dump: Vec::new(),
+        label: String::new(),
+        set: Vec::new(),
+        layout: String::new(),
+        view: "chase".into(),
+        capture: 1,
+        sun_angle: -16.0,
+        weather: "3_clear".into(),
+        ghost: None,
+        ghost_lap_ms: 0.0,
+        loose: false,
+        serial: false,
+        own_textures: false,
+        car_data: None,
+        time_mult: 1.0,
+        gui: None,
+        frame_options: Vec::new(),
+    };
+    let mut profile = root::TASK_20;
+    while let Some(flag) = list.next() {
+        let mut value = || list.next().ok_or(format!("{flag} needs a value"));
+        let mut frame_option = true;
+        let mut text = String::new();
+        match flag.as_str() {
+            "--acs" => {
+                a.acs = PathBuf::from(value()?);
+                frame_option = false;
+            }
+            "--root" => {
+                // absolute: the game's side changes the current directory
+                a.root = std::path::absolute(value()?).map_err(|e| e.to_string())?;
+                frame_option = false;
+            }
+            "--out" => {
+                // absolute: the game's side changes the current directory
+                let given = PathBuf::from(value()?);
+                let absolute = if given.is_absolute() { given } else { std::env::current_dir().map_err(|e| e.to_string())?.join(given) };
+                text = absolute.to_string_lossy().into_owned();
+                a.out = absolute;
+            }
+            "--size" => {
+                text = value()?;
+                let (w, h) = text.split_once('x').ok_or("--size WxH")?;
+                a.width = w.parse().map_err(|_| "--size WxH")?;
+                a.height = h.parse().map_err(|_| "--size WxH")?;
+            }
+            "--side" => {
+                a.side = value()?;
+                frame_option = false;
+            }
+            "--track" => {
+                text = value()?;
+                a.track = Some(text.clone());
+            }
+            "--car" => {
+                text = value()?;
+                a.car = Some(text.clone());
+            }
+            "--skin" => {
+                text = value()?;
+                a.skin = Some(text.clone());
+            }
+            "--pose" => {
+                let given = PathBuf::from(value()?);
+                let absolute = if given.is_absolute() { given } else { std::env::current_dir().map_err(|e| e.to_string())?.join(given) };
+                text = absolute.to_string_lossy().into_owned();
+                a.pose = Some(absolute);
+            }
+            "--tape" => {
+                let given = PathBuf::from(value()?);
+                let absolute = if given.is_absolute() { given } else { std::env::current_dir().map_err(|e| e.to_string())?.join(given) };
+                text = absolute.to_string_lossy().into_owned();
+                a.tape = Some(absolute);
+            }
+            "--tapes" => {
+                let given = PathBuf::from(value()?);
+                let absolute = if given.is_absolute() { given } else { std::env::current_dir().map_err(|e| e.to_string())?.join(given) };
+                text = absolute.to_string_lossy().into_owned();
+                a.tapes = Some(absolute);
+            }
+            "--poses" => {
+                let list = value()?;
+                let mut absolute = Vec::new();
+                for item in list.split(',').filter(|s| !s.is_empty()) {
+                    let (car, file) = item.split_once('=').ok_or("--poses <car>=<file.pose>,…")?;
+                    let file = PathBuf::from(file);
+                    let file = if file.is_absolute() { file } else { std::env::current_dir().map_err(|e| e.to_string())?.join(file) };
+                    absolute.push(format!("{car}={}", file.to_string_lossy()));
+                    a.poses.push((car.to_string(), file));
+                }
+                text = absolute.join(",");
+            }
+            "--max-cars" => {
+                text = value()?;
+                a.max_cars = text.parse().map_err(|_| "--max-cars <n>")?;
+            }
+            "--fade-at" => {
+                text = value()?;
+                a.fade_at = Some(text.parse().map_err(|_| "--fade-at <frame>")?);
+            }
+            "--loaded" => {
+                text = value()?;
+                a.loaded = text.parse().map_err(|_| "--loaded <n>")?;
+            }
+            "--car-data" => {
+                let given = PathBuf::from(value()?);
+                let absolute = if given.is_absolute() { given } else { std::env::current_dir().map_err(|e| e.to_string())?.join(given) };
+                text = absolute.to_string_lossy().into_owned();
+                a.car_data = Some(absolute);
+            }
+            "--tape-from" => {
+                text = value()?;
+                a.tape_from = text.parse().map_err(|_| "--tape-from <frame>")?;
+            }
+            "--frames" => {
+                text = value()?;
+                a.frames = text.parse().map_err(|_| "--frames <count>")?;
+                a.frames_given = true;
+            }
+            "--label" => {
+                text = value()?;
+                a.label = text.clone();
+            }
+            "--set" => {
+                text = value()?;
+                for item in text.split(',').filter(|s| !s.is_empty()) {
+                    let (item, from) = match item.split_once('@') {
+                        Some((item, from)) => (item, from.parse().map_err(|_| format!("--set {item}@<frame>"))?),
+                        None => (item, 0usize),
+                    };
+                    let (name, value) = item.split_once('=').ok_or("--set name=value[@frame],…")?;
+                    a.set.push((name.to_string(), value.to_string(), from));
+                }
+            }
+            "--dump" => {
+                let list = value()?;
+                a.dump = list.split(',').filter(|s| !s.is_empty()).map(|s| s.parse().map_err(|_| "--dump <frame,frame,...>".to_string())).collect::<Result<_, _>>()?;
+                frame_option = false;
+            }
+            "--layout" => {
+                text = value()?;
+                a.layout = if text == "-" { String::new() } else { text.clone() };
+            }
+            "--view" => {
+                text = value()?;
+                a.view = text.clone();
+            }
+            "--capture" => {
+                text = value()?;
+                a.capture = text.parse().map_err(|_| "--capture <n>")?;
+            }
+            "--shadow-size" | "--cubemap-size" | "--world-detail" | "--anisotropic" | "--cubemap-faces" | "--smoke" | "--mirror" | "--mirror-hq" | "--aa" => {
+                text = value()?;
+                let number: i32 = text.parse().map_err(|_| format!("{flag} <number>"))?;
+                match flag.as_str() {
+                    "--shadow-size" => profile.shadow_map_size = number,
+                    "--cubemap-size" => profile.cubemap_size = number,
+                    "--world-detail" => profile.world_detail = number,
+                    "--smoke" => profile.smoke = number,
+                    "--mirror" => profile.mirror_size = number,
+                    "--mirror-hq" => profile.mirror_hq = number,
+                    "--aa" => profile.aa_samples = number.max(1),
+                    // Sim::initCubemaps 0x1401997a0: 0 to 6
+                    "--cubemap-faces" => profile.cubemap_faces_per_frame = number.clamp(0, 6),
+                    _ => profile.anisotropic = number,
+                }
+            }
+            "--cubemap-far" => {
+                text = value()?;
+                profile.cubemap_far_plane = text.parse().map_err(|_| "--cubemap-far <metres>")?;
+            }
+            "--sun" => {
+                text = value()?;
+                a.sun_angle = text.parse().map_err(|_| "--sun <degrees>")?;
+            }
+            "--time-mult" => {
+                text = value()?;
+                a.time_mult = text.parse().map_err(|_| "--time-mult <number>")?;
+            }
+            "--weather" => {
+                text = value()?;
+                a.weather = text.clone();
+            }
+            "--ghost" => {
+                text = value()?;
+                a.ghost = Some(std::path::absolute(&text).map_err(|e| e.to_string())?.to_string_lossy().into_owned());
+                text = a.ghost.clone().unwrap_or_default();
+            }
+            "--ghost-lap-ms" => {
+                text = value()?;
+                a.ghost_lap_ms = text.parse().map_err(|_| "--ghost-lap-ms <ms>")?;
+            }
+            "--gui" => {
+                text = value()?;
+                a.gui = Some(text.clone());
+            }
+            "--own-textures" => {
+                a.own_textures = true;
+            }
+            "--loose" => {
+                a.loose = true;
+                frame_option = false;
+            }
+            "--mirror-smoke" => {
+                profile.mirror_smoke = true;
+            }
+            "--virtual-mirror" => {
+                profile.virtual_mirror = true;
+            }
+            "--post" => {
+                profile.post = true;
+            }
+            "--fxaa" => {
+                profile.fxaa = true;
+            }
+            "--ppfilter" => {
+                text = value()?;
+                profile.ppfilter = Box::leak(text.clone().into_boxed_str());
+            }
+            "--motion-blur" => {
+                text = value()?;
+                // Sim::Sim 0x140192070: 0 to 12
+                profile.motion_blur = text.parse::<i32>().map_err(|_| "--motion-blur <0..12>")?.clamp(0, 12);
+            }
+            "--ldr-levels" => {
+                profile.ldr_levels = true;
+            }
+            "--triple" => {
+                profile.triple = true;
+            }
+            "--vr" => {
+                profile.vr = true;
+            }
+            "--vr-tracker" => {
+                text = value()?;
+                profile.vr = true;
+                profile.vr_tracker = ["LEFT_HAND", "RIGHT_HAND", "TRACKER"].into_iter().find(|t| *t == text).ok_or("--vr-tracker LEFT_HAND|RIGHT_HAND|TRACKER")?;
+            }
+            "--vr-room" => {
+                profile.vr = true;
+                profile.vr_room = true;
+            }
+            "--oculus" => {
+                profile.vr = true;
+                profile.oculus = true;
+            }
+            "--serial" => {
+                a.serial = true;
+                frame_option = false;
+            }
+            "--verbose" => {
+                a.verbose = true;
+                frame_option = false;
+            }
+            other => return Err(format!("unknown option {other}\n{USAGE}")),
+        }
+        if frame_option {
+            a.frame_options.push(flag.clone());
+            if !text.is_empty() {
+                a.frame_options.push(text);
+            }
+        }
+    }
+    root::set_profile(profile);
+    Ok(a)
+}
+
+/// `RENDER_ORACLE_TIMING=1`: each side prints how long its frames took (from `beginScene` to the
+/// picture read back, so the graphics card has finished), for the cost of a setting on the
+/// game's own renderer against the port's (with `RENDER_ORACLE_HARDWARE=1`).
+pub static FRAME_MS: std::sync::Mutex<Vec<f64>> = std::sync::Mutex::new(Vec::new());
+
+/// Task 44c: `RENDER_ORACLE_PICK=<file stem>`: every captured frame's `RayPicker::pick` (Photo
+/// mode's END) at the screen points of [`PICK_AT`], one line each, into `<stem>.<side>.txt`.
+pub fn pick_line(side: &str, index: usize, at: (i32, i32), distance: f32) {
+    use std::io::Write;
+    let Some(stem) = std::env::var_os("RENDER_ORACLE_PICK") else { return };
+    let path = format!("{}.{side}.txt", stem.to_string_lossy());
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "frame {index} at {} {}: {:08x} {distance}", at.0, at.1, distance.to_bits());
+    }
+}
+
+/// The picked points, as parts of the screen: its centre (END's), and around it.
+pub fn pick_at(w: i32, h: i32) -> [(i32, i32); 5] {
+    [(w / 2, h / 2), (w / 4, h / 2), (w * 3 / 4, h * 2 / 3), (w / 2, h * 3 / 4), (w / 3, h / 3)]
+}
+
+/// `RENDER_ORACLE_RESIZE=<frame>:<W>x<H>` (Task Y2c): the window resized before that frame, as the game's WM_SIZE does
+pub fn resize() -> Option<(usize, i32, i32)> {
+    let v = std::env::var("RENDER_ORACLE_RESIZE").ok()?;
+    let (frame, size) = v.split_once(':')?;
+    let (w, h) = size.split_once('x')?;
+    Some((frame.parse().ok()?, w.parse().ok()?, h.parse().ok()?))
+}
+
+pub fn timing() -> bool {
+    std::env::var_os("RENDER_ORACLE_TIMING").is_some_and(|v| v == "1")
+}
+
+fn print_timing(side: &str) {
+    let mut ms = FRAME_MS.lock().unwrap().clone();
+    if !timing() || ms.is_empty() {
+        return;
+    }
+    let mean = ms.iter().sum::<f64>() / ms.len() as f64;
+    ms.sort_by(|a, b| a.total_cmp(b));
+    println!("timing {side}: {} frames, median {:.2} ms, mean {:.2} ms, fastest {:.2} ms, slowest {:.2} ms", ms.len(), ms[ms.len() / 2], mean, ms[0], ms[ms.len() - 1]);
+}
+
+pub fn write_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    writer.write_image_data(rgba).map_err(|e| e.to_string())
+}
+
+fn run_side(args: &Args) -> Result<(), String> {
+    root::set_documents(&args.root);
+    let frame = frames::build(args)?;
+    std::fs::create_dir_all(&args.out).map_err(|e| e.to_string())?;
+    let (init, rendered) = match args.side.as_str() {
+        "ac" => {
+            root::prepare(args)?;
+            if let Some(car) = &frame.car {
+                ac_car::prepare_root(&args.root, &args.game, &repo_root(), car, args.car_data.as_deref())?;
+            }
+            for (i, other) in frame.others.iter().enumerate() {
+                // (the same car twice: its files are there already)
+                if frame.car.as_ref().is_some_and(|c| c.name == other.name && c.skin == other.skin) || frame.others[..i].iter().any(|o| o.name == other.name && o.skin == other.skin) {
+                    continue;
+                }
+                ac_car::prepare_root(&args.root, &args.game, &repo_root(), other, None)?;
+            }
+            std::env::set_current_dir(&args.root).map_err(|e| format!("{}: {e}", args.root.display()))?;
+            let game = ac::Game::start(args)?;
+            let rendered = unsafe { game.render(&frame, &args.dump, args.time_mult)? };
+            (game.init_log.clone(), rendered)
+        }
+        "port" => {
+            rustyac_render::texture::force_fallback(args.own_textures);
+            // a made-up test car: the port reads a folder of its own, laid out like the game's
+            if let (Some(car), Some(_)) = (&frame.car, &args.car_data) {
+                ac_car::prepare_root(&args.root.join("port_side"), &args.game, &repo_root(), car, args.car_data.as_deref())?;
+            }
+            port::render(args, &frame)?
+        }
+        other => return Err(format!("--side {other:?} is not ac or port")),
+    };
+    print_timing(&args.side);
+    let file = |kind: &str| args.out.join(format!("{}.{}.{kind}", frame.name, args.side));
+    std::fs::write(file("init.gpulog"), &init).map_err(|e| e.to_string())?;
+    std::fs::write(file("cube.gpulog"), &rendered.cube_log).map_err(|e| e.to_string())?;
+    if !rendered.vr.is_empty() {
+        std::fs::write(file("vr"), &rendered.vr).map_err(|e| e.to_string())?;
+    }
+    if !rendered.triple.is_empty() {
+        std::fs::write(file("triple"), &rendered.triple).map_err(|e| e.to_string())?;
+    }
+    if frame.sequence {
+        // one line per frame, and the whole of the frames asked for
+        let mut list = String::new();
+        for f in &rendered.frames {
+            list.push_str(&format!("{} calls={} draws={} log={:016x} pixels={:016x}\n", f.index, f.calls, f.draws, f.log_hash, f.pixels_hash));
+            if let (Some(log), Some(pixels)) = (&f.log, &f.pixels) {
+                std::fs::write(file(&format!("f{}.gpulog", f.index)), log).map_err(|e| e.to_string())?;
+                std::fs::write(file(&format!("f{}.rgba", f.index)), pixels).map_err(|e| e.to_string())?;
+                write_png(&file(&format!("f{}.png", f.index)), f.size.0, f.size.1, pixels)?;
+            }
+        }
+        std::fs::write(file("seq"), list).map_err(|e| e.to_string())?;
+        println!("{}: {} frames", file("seq").display(), rendered.frames.len());
+        return Ok(());
+    }
+    let f = rendered.frames.last().ok_or("no frame was captured")?;
+    let (log, pixels) = (f.log.as_ref().ok_or("no log")?, f.pixels.as_ref().ok_or("no pixels")?);
+    std::fs::write(file("gpulog"), log).map_err(|e| e.to_string())?;
+    std::fs::write(file("rgba"), pixels).map_err(|e| e.to_string())?;
+    write_png(&file("png"), rendered.width, rendered.height, pixels)?;
+    println!("{}: {} draw calls, {} log lines, {}x{}", file("").display(), f.draws, f.calls, rendered.width, rendered.height);
+    Ok(())
+}
+
+fn run() -> Result<(), String> {
+    let args = parse()?;
+    match args.command.as_str() {
+        // `pose-of --tape <file.audiotape> --tape-from <frame> --pose <out.pose>`: one frame of a
+        // tape as a pose file (the part of the state the picture reads)
+        "pose-of" => {
+            let tape = args.tape.as_ref().ok_or("pose-of --tape <file.audiotape> --tape-from <frame> --pose <out.pose>")?;
+            let out = args.pose.as_ref().ok_or("pose-of … --pose <out.pose>")?;
+            let state = frames::read_tape(tape, args.tape_from, 1)?.into_iter().next().ok_or("the tape has no such frame")?;
+            std::fs::write(out, state.to_bytes()).map_err(|e| format!("{}: {e}", out.display()))?;
+            println!("{}: frame {} of {}", out.display(), args.tape_from, tape.display());
+            Ok(())
+        }
+        // the GUI oracle: `gui --gui <sequence>` compares, `gui-run --side ac|port --gui <sequence>` runs one side
+        "gui-run" => gui_compare::run_side(&args),
+        "gui" => gui_compare::compare(&args),
+        // the text backend without DirectWrite against the game's text
+        "text-fallback" => text_fallback::run(&args),
+        // every car's collider box, the game's against the port's
+        "boundaries" => boundaries::run(&args),
+        "run" => run_side(&args),
+        "compare" => compare::compare(&args),
+        _ => Err(USAGE.into()),
+    }
+}
+
+fn main() {
+    if let Err(message) = run() {
+        eprintln!("{message}");
+        std::process::exit(1);
+    }
+}
