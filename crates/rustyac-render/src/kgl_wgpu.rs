@@ -322,6 +322,8 @@ struct Replay {
     programs: HashMap<(u32, u32), Option<Rc<Program>>>,
     pipelines: HashMap<PipelineKey, Option<Rc<wgpu::RenderPipeline>>>,
     blits: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    /// the plain copy that makes a cube map's mip levels (no gain, no lamps)
+    mips: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     depth_copy: Option<wgpu::RenderPipeline>,
     depth_copy_ms: Option<wgpu::RenderPipeline>,
     warned: std::collections::HashSet<String>,
@@ -528,6 +530,7 @@ impl Kgl {
                 programs: HashMap::new(),
                 pipelines: HashMap::new(),
                 blits: HashMap::new(),
+                mips: HashMap::new(),
                 depth_copy: None,
                 depth_copy_ms: None,
                 warned: Default::default(),
@@ -1172,7 +1175,7 @@ impl Kgl {
         };
         self.end_pass();
         let tex = &tex.0;
-        let pipeline = self.blit_pipeline(tex.format);
+        let pipeline = self.mip_pipeline(tex.format);
         let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
         let mut replay = self.replay.borrow_mut();
         let encoder = Kgl::encoder(&self.device, &mut replay);
@@ -1615,6 +1618,37 @@ impl Kgl {
         }
         *t.copy.borrow_mut() = Some((t.written.get(), target, view.clone()));
         view
+    }
+
+    /// A bilinear copy of one texture into a target: the mip levels of a cube map.
+    fn mip_pipeline(&self, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+        let mut replay = self.replay.borrow_mut();
+        replay
+            .mips
+            .entry(format)
+            .or_insert_with(|| {
+                let source = format!(
+                    "{FULLSCREEN_VS}
+                    @group(0) @binding(0) var src: texture_2d<f32>;
+                    @group(0) @binding(1) var smp: sampler;
+                    @fragment fn fs(v: V) -> @location(0) vec4<f32> {{
+                        return textureSampleLevel(src, smp, v.uv, 0.0);
+                    }}"
+                );
+                let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("kgl mips"), source: wgpu::ShaderSource::Wgsl(source.into()) });
+                self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("kgl mips"),
+                    layout: None,
+                    vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+                    primitive: Default::default(),
+                    depth_stencil: None,
+                    multisample: Default::default(),
+                    fragment: Some(wgpu::FragmentState { module: &module, entry_point: Some("fs"), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })] }),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            })
+            .clone()
     }
 
     fn blit_pipeline(&self, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
