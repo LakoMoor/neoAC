@@ -1951,7 +1951,7 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
     }}
     // the lamps again in the wet road, upside down and drawn out long: the lens' mirror image below the ground
     let wet = gain.a[28].z;
-    if (wet > 0.0) {{
+    if (wet > 0.0 && ndcp.y < 0.3) {{
         let luma = dot(c.rgb, vec3<f32>(0.3, 0.59, 0.11));
         let dark = 1.0 - smoothstep(0.25, 0.6, luma);
         for (var i = 11; i < 15; i = i + 1) {{
@@ -1967,8 +1967,11 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
                     let dd = (ndcp - vec2<f32>(sx, sy)) * vec2<f32>(asp, 1.0);
                     let r = 0.045 / (z * tg + 0.8) * 3.0;
                     // longer downwards from the mirror point, thin sideways
-                    let streak = exp(-(dd.x * dd.x) / (r * r * 0.5)) * exp(-abs(dd.y) / (r * 9.0)) * 1.3;
-                    c = vec4<f32>(c.rgb + gain.a[i + 5].xyz * streak * g.w * wet * dark * 1.4, c.a);
+                    // (a pixel far to the side of the streak takes nothing: no exponentials spent on it)
+                    if (abs(dd.x) < r * 3.5 && abs(dd.y) < r * 30.0) {{
+                        let streak = exp(-(dd.x * dd.x) / (r * r * 0.5)) * exp(-abs(dd.y) / (r * 9.0)) * 1.3;
+                        c = vec4<f32>(c.rgb + gain.a[i + 5].xyz * streak * g.w * wet * dark * 1.4, c.a);
+                    }}
                 }}
             }}
         }}

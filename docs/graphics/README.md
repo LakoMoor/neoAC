@@ -79,3 +79,15 @@ AC's own renderer (Full) is not in the demo.
 
 (AC's sun does not set further than about 18.3 h; a clear sky at 18.8 h is still a low sun, so night is made with heavy clouds. With the lamps forced on
 in that low sun, AC's own light on the sunlit ground blows out; that is AC's engine and the same in the old build.)
+
+## Frame rate, remeasured at the end (1920x1080, High, static cube map, M4, 8 s runs)
+
+| Track | day | sunset, rain | night, rain, headlights |
+|---|---|---|---|
+| drift (GT-R, Huracán) | 60.0 / 60.0 | 60.0 / 60.0 | 60.0 / 60.0 |
+| nevadadrift (GT-R, Huracán) | 60.0 / 60.0 | 60.0 / 60.0 | 52 / 45 |
+| mount_akina_2017 (GT-R, Huracán) | 59.9 / 59.5 | 58.9 / 59.1 | 58.1 / 56.6 |
+
+17 of 18 scenes are within 4 fps of 60 or at 60; the exception is nevadadrift at night in rain with headlights (45-52). During these runs another
+job (a Python process at 100 % of a core, not part of this project) was running on the Mac and the same scenes measured 60 on quiet moments, so
+these are the lower figures, not the best. The six-face live cube map of the High preset still costs 10-25 fps on the heavy tracks.
