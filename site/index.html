@@ -46,9 +46,9 @@ nav .links a:hover{color:var(--text)}
 
 /* hero */
 .hero{position:relative;min-height:min(100svh,880px);display:flex;align-items:flex-end;overflow:hidden;isolation:isolate}
-.hero img.bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 70%;z-index:-2;transform:scale(1);animation:none}
+.hero img.bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 70%;z-index:-2;transform:scale(1.25);transform-origin:0% 80%;animation:none}
 @keyframes drift{to{transform:scale(1.12) translate(-1.2%,-1%)}}
-.hero::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(to top,var(--bg) 4%,color-mix(in srgb,var(--bg) 55%,transparent) 42%,transparent 75%),linear-gradient(to right,color-mix(in srgb,var(--bg) 75%,transparent),transparent 60%)}
+.hero::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(to top,var(--bg) 4%,color-mix(in srgb,var(--bg) 55%,transparent) 42%,transparent 75%),linear-gradient(to right,color-mix(in srgb,var(--bg) 92%,transparent),color-mix(in srgb,var(--bg) 55%,transparent) 45%,transparent 70%)}
 .hero .wrap{padding-bottom:84px;padding-top:140px}
 .pill{display:inline-flex;gap:8px;align-items:center;padding:7px 14px;border-radius:99px;border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 75%,transparent);font-size:13px;color:var(--mute);backdrop-filter:blur(8px)}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 12px var(--ok)}
@@ -151,7 +151,7 @@ dialog button{position:absolute;top:-14px;right:-14px;width:38px;height:38px;bor
 
 <nav>
   <div class="wrap">
-    <a class="logo" href="#top"><img src="logo.svg" alt="" width="30" height="30">neo<b>AC</b></a>
+    <a class="logo" href="#top"><img src="logo.svg" alt="" width="30" height="30"><span>neo<b>AC</b></span></a>
     <div class="links">
       <a href="#features">Features</a>
       <a href="#showcase">Showcase</a>
