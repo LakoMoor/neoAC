@@ -1871,14 +1871,14 @@ if (gain.a[3].w > 0.0 && have_depth) {{
                     lit = lit + (0.30 * skirt + 0.9 * core) * fall * facing;
                 }}
                 let warm = vec3<f32>(1.0, 0.9, 0.7);
-                let strength = 1.1 * (1.0 - exp(-lit * 1.4)) * (1.0 - inside) * (0.4 + 0.6 * gain.a[3].w);
+                let strength = 1.1 * (1.0 - exp(-lit * 1.4)) * (1.0 - inside) * (0.4 + 0.6 * gain.a[3].w) * (1.0 - smoothstep(0.3, 0.8, max(c.r, max(c.g, c.b))));
                 let mx = max(c.r, max(c.g, c.b));
                 let mn = min(c.r, min(c.g, c.b));
                 let sat = (mx - mn) / max(mx, 0.02);
                 // tarmac takes the light as before (grey and dark); anything else, grass, walls, trees, is lit by its own colour
                 let road = select(0.0, clamp(1.0 - sat * 2.5, 0.0, 1.0) * (1.0 - smoothstep(0.28, 0.5, mx)), n.y > 0.8);
                 let by_colour = (vec3<f32>(0.06) + 1.1 * c.rgb) * (1.0 - smoothstep(0.7, 1.0, mx));
-                let by_road = vec3<f32>(0.35 + 0.65 * (1.0 - mx));
+                let by_road = vec3<f32>(0.3 + 0.7 * (1.0 - mx) * (1.0 - mx));
                 c = vec4<f32>(c.rgb + warm * strength * mix(by_colour, by_road, road), c.a);
             }}
         }}
@@ -2066,7 +2066,7 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
                                         let luma = dot(c.rgb, vec3<f32>(0.3, 0.59, 0.11));
                                         // glass is dark and mirrors more; paint mirrors at grazing angles
                                         let fres = 0.04 + 0.96 * pow(1.0 - max(dot(n, eye), 0.0), 4.0);
-                                        let strength = mix(0.9, 0.35, smoothstep(0.05, 0.5, luma)) * fres + 0.05;
+                                        let strength = (mix(0.8, 0.14, smoothstep(0.05, 0.45, luma)) * fres + 0.03) * (1.0 - 0.6 * luma);
                                         c = vec4<f32>(c.rgb + vec3<f32>(1.0, 0.96, 0.88) * sun_glint + sky * rim * 0.5 + refl * strength * (0.6 + 0.4 * day), c.a);
                                     }}
                                 }}

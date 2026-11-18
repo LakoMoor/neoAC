@@ -1,6 +1,6 @@
 # Graphics: before and after
 
-`before/` is the build at commit `a97f1e0` (with static reflections: that build blacks out with live cube-map faces), `after/` the current one. The same 36 shots each:
+`before/` and `after/` each hold 72 shots now (3 tracks x 4 cars x 6 looks: day, sunset and night, dry and in rain). `before/` is the build at commit `a97f1e0` (with static reflections: that build blacks out with live cube-map faces), `after/` the current one. The same 36 shots each:
 3 tracks (drift, nevadadrift, mount_akina_2017) × 4 cars (GT-R, Huracán Performante, Lancer Evo VI, Skyline R34)
 × day / sunset / night in rain, High preset (4096 shadow map, 4× MSAA, live cube-map reflections), 1280×720 on an M4 (Metal).
 `compare/` has four side-by-side pairs (left before, right after).
@@ -65,3 +65,17 @@ with the Lights button tapped and the camera turned round the car by a one-finge
 (`night_headlights_webgpu.png`) and WebGL2 (`night_headlights_webgl2.png`), show the headlight beam on the ground and wall ahead of the nose;
 `night_lights_off_webgpu.png` is the same hour with the lights off. The demo's pack has no AC shaders, so it always draws the debug picture;
 AC's own renderer (Full) is not in the demo.
+
+## The 6 looks (every track and car)
+
+| Look | hour, weather, grip | File suffix |
+|---|---|---|
+| day, dry | 13, 3_clear | `_day` |
+| sunset, dry | 17.4, 5_light_clouds | `_sunset` |
+| night, rain | 18.8, 7_heavy_clouds, grip 0.6, lamps on | `_night_rain` |
+| day, rain | 13, 6_mid_clouds, grip 0.6 | `_day_rain` |
+| sunset, rain | 17.4, 7_heavy_clouds, grip 0.6 | `_sunset_rain` |
+| night, dry | 18.8, 7_heavy_clouds, lamps on | `_night_dry` |
+
+(AC's sun does not set further than about 18.3 h; a clear sky at 18.8 h is still a low sun, so night is made with heavy clouds. With the lamps forced on
+in that low sun, AC's own light on the sunlit ground blows out; that is AC's engine and the same in the old build.)
