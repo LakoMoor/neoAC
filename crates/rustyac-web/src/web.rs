@@ -688,8 +688,8 @@ impl Game {
             if self.orbit != [0.0; 2] {
                 camera = crate::full::orbit_frame(camera, pivot, self.orbit[0], self.orbit[1]);
             }
-            for k in 0..3 {
-                camera.matrix[3][k] = pivot[k] + (camera.matrix[3][k] - pivot[k]) * self.zoom;
+            for (eye, centre) in camera.matrix[3].iter_mut().zip(pivot) {
+                *eye = centre + (*eye - centre) * self.zoom;
             }
         }
         let remote = self.session.remote_views();
