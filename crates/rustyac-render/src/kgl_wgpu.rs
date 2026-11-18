@@ -1969,7 +1969,7 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
                     // longer downwards from the mirror point, thin sideways
                     // (a pixel far to the side of the streak takes nothing: no exponentials spent on it)
                     if (abs(dd.x) < r * 3.5 && abs(dd.y) < r * 30.0) {{
-                        let streak = exp(-(dd.x * dd.x) / (r * r * 0.5)) * exp(-abs(dd.y) / (r * 9.0)) * 1.3;
+                        let streak = exp(-(dd.x * dd.x) / (r * r * 0.5)) * exp(-select(dd.y / (r * 1.2), -dd.y / (r * 7.0), dd.y < 0.0)) * 1.3;
                         c = vec4<f32>(c.rgb + gain.a[i + 5].xyz * streak * g.w * wet * dark * 1.4, c.a);
                     }}
                 }}

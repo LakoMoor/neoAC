@@ -1473,7 +1473,22 @@ FILTER=default
             put(&mut out, 10, [b[3][0], b[3][1], b[3][2]], 0.0);
             // the lenses' glow: headlights on the nose, taillights at the back (brighter on the brake), seen from the side they face
             let to_cam = [0, 1, 2].map(|i| m[3][i] - b[3][i]);
-            let _along = to_cam[0] * b[2][0] + to_cam[1] * b[2][1] + to_cam[2] * b[2][2];
+            let along = to_cam[0] * b[2][0] + to_cam[1] * b[2][1] + to_cam[2] * b[2][2];
+            // (a lens shows from the side it faces: the headlights to a camera ahead of the car's middle, the tail lamps to one behind)
+            let seen_front = (along / 3.0 + 0.3).clamp(0.0, 1.0);
+            let seen_rear = (-along / 3.0 + 0.3).clamp(0.0, 1.0);
+            if let Some(f) = model.front {
+                put(&mut out, 11, world(f[0]), fade * seen_front * 0.5);
+                put(&mut out, 12, world(f[1]), fade * seen_front * 0.5);
+                put(&mut out, 16, model.front_color, 0.0);
+                put(&mut out, 17, model.front_color, 0.0);
+            }
+            if let Some(r) = model.rear {
+                put(&mut out, 13, world(r[0]), fade * seen_rear * 0.5);
+                put(&mut out, 14, world(r[1]), fade * seen_rear * 0.5);
+                put(&mut out, 18, model.rear_color_off, 0.0);
+                put(&mut out, 19, model.rear_color_off, 0.0);
+            }
             // the car cut-out of the pools: the body's extent from the model, a low block over the bonnet
             let (lo, hi) = (model.min, model.max);
             if lo[0] < hi[0] {

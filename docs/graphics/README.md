@@ -118,7 +118,7 @@ headlights at 45-52 fps while another job loaded the Mac. AC's six-face live cub
 
 The glare is there in every look; it is gentle and strongest where a few very bright spots stand in a dark picture (night in rain: 1.7 levels in the ring,
 up to 148 at the lamps). The wet road at night in front of the car, with poles, trees and the car mirrored: `checks/wet_road_night_front.png`;
-the lamps' own lens glow is not mirrored (the lenses barely glow in the frame, so the road shows the light pool and the poles, not the lamps).
+
 
 ## Bloom on every track and car (day, and night in rain with lamps; GLARE on vs off; mean change in the 40 px ring around pixels above 200 / largest change)
 
@@ -138,3 +138,10 @@ the lamps' own lens glow is not mirrored (the lenses barely glow in the frame, s
 | mount_akina_2017 | ks_nissan_skyline_r34 | 0.83 / 220 | 0.29 / 134 |
 
 The glare shows in all 24 pairs (largest change 27-220 levels of 255). It is gentle on average and strongest at night, where a few bright lamps stand in a dark picture.
+
+## Lamps and their mirror image (the last open item of condition 1)
+
+The lens glow of `lights.ini` lamps (headlights seen from ahead, tail lamps from behind) had never been fed to the present pass. It is now, and each lens is
+mirrored in the wet road as a streak running towards the camera: `checks/lamps_glow_and_wet_road_mirror.jpg` (left: from ahead, lamps glow and their
+streaks lie on the wet tarmac; right: from behind and the side, only the beam on the road). The 24 night shots (`_night_rain`, `_night_dry`) were taken again with it.
+Frame rate with it, nevadadrift at night in rain with headlights, 1920x1080: 59.6 and 58.9 fps (the Mac was quiet this time).
