@@ -1515,6 +1515,30 @@ FILTER=default
             put(&mut self.lamps, 27, [m[3][0], m[3][1], m[3][2], 1.0]);
             put(&mut self.lamps, 28, [frame.near, far, self.rain, 0.16 + 0.24 * (1.0 - daylight)]);
             put(&mut self.lamps, 29, [1.0 + 0.10 * (1.0 - daylight), 0.0, 0.0, 0.0]);
+            // the glints on paint and glass: the body's frame and blocks (as the pools' cut-out has them), the sun's way
+            if let Some(car) = self.cars.first() {
+                if self.lamp_model.is_none() {
+                    self.lamp_model = Some(car.brake_lights.lamp_model(&self.scene, car.body_transform));
+                }
+                let b = self.scene.nodes[car.body_transform].matrix.m;
+                for (i, k) in [7usize, 8, 9, 10].into_iter().enumerate() {
+                    put(&mut self.lamps, k, [b[i][0], b[i][1], b[i][2], 0.0]);
+                }
+                let model = self.lamp_model.clone().unwrap_or_default();
+                let (lo, hi) = (model.min, model.max);
+                if lo[0] < hi[0] {
+                    let len = hi[2] - lo[2];
+                    let top = model.front.map_or(hi[1], |f| f[0][1] + 0.1);
+                    let c = (lo[0] + hi[0]) * 0.5;
+                    let h = (hi[0] - lo[0]) * 0.5;
+                    put(&mut self.lamps, 20, [c, (lo[1] + hi[1]) * 0.5, lo[2] + len * 0.35, 0.0]);
+                    put(&mut self.lamps, 21, [h, (hi[1] - lo[1]) * 0.5, len * 0.35, 0.0]);
+                    put(&mut self.lamps, 22, [c, (lo[1] + top) * 0.5, lo[2] + len * 0.85, 0.0]);
+                    put(&mut self.lamps, 23, [h, (top - lo[1]) * 0.5, len * 0.15, 0.0]);
+                }
+            }
+            let sun = self.graphics.lighting.light_direction;
+            put(&mut self.lamps, 30, [-sun.x, -sun.y, -sun.z, daylight]);
         }
         let cam = &mut self.camera.base.camera;
         cam.fov = frame.fov;

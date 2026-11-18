@@ -278,6 +278,14 @@ impl Emitter<'_> {
                 let s = sampler()?;
                 let reference = format!("{}.x", self.src(&ins.operands[4], Ty::F)?);
                 let f = if ins.opcode == op::SAMPLE_C && !vertex { "textureSampleCompare" } else { "textureSampleCompareLevel" };
+                if dimension == 3 && off.is_empty() && !vertex && ins.opcode == op::SAMPLE_C {
+                    // a soft shadow edge: the lookup's 2x2 filter taken five times, the middle one and four
+                    // a texel and a half to each side, the middle one weighing the most
+                    let t = format!("(1.5 / vec2<f32>(textureDimensions({tex})))");
+                    let at = |dx: &str, dy: &str| format!("textureSampleCompare({tex}, {s}, {coords} + vec2<f32>({dx}, {dy}) * {t}, {reference})");
+                    let sum = format!("(0.28 * {} + 0.18 * ({} + {} + {} + {}))", at("0.0", "0.0"), at("1.0", "0.4"), at("-1.0", "-0.4"), at("-0.4", "1.0"), at("0.4", "-1.0"));
+                    return Ok(format!("bitcast<vec4<u32>>(vec4<f32>({sum}))"));
+                }
                 format!("bitcast<vec4<u32>>(vec4<f32>({f}({tex}, {s}, {coords}, {reference}{off})))")
             }
             op::LD | op::LD_MS => {
