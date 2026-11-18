@@ -161,3 +161,15 @@ Frame rate with it, nevadadrift at night in rain with headlights, 1920x1080: 59.
 - `checks/bloom_off_vs_on_6_looks.jpg`: the six looks, each as glare off (left) and glare on (right). Looked at by eye, the pairs are almost the same: AC's glare is
   there (see the numbers above) but so gentle that it is hard to see at this size. A stronger bloom of our own was tried and cost 7-10 fps, so it was not kept.
   Bloom is therefore present but weak, not a visible feature of these frames.
+
+## Close-up paint, and the browser demo's shadow, lights and speedometer
+
+- `checks/paint_closeup.jpg`: the paint from half a metre (Huracán by day, Skyline at sunset): the sky and the clouds mirror in the bonnet and roof, the
+  highlights run along the curves, the colour deepens away from the sun, the glass reflects too.
+- The demo's car shadow was a flat black box under the body at 42 % (the square seen in the browser shots). It is now a soft oval that fades to nothing at its rim
+  (`checks/web_contact_shadow.jpg`), drawn in the shader from the box's own coordinates.
+- Demo page: its Play button asked for a car that is not in the pack any more (a Mercedes; the pack holds the Lancer), the page text still said Mercedes, and
+  `make_demo.py` copied that old page over the fixed one each time. The source page now names the Lancer.
+- Lights: the Lights button (key L) now lights up when the lamps are on, the display says LIGHTS, and the driver starts with them on at dusk and night
+  (`checks/web_night_lights_on.jpg`, taken with `?hour=18.8`). The key list now mentions L. The speedometer and tachometer were checked live on the demo (WebGPU and
+  WebGL2, phone and desktop size): 34-71 km/h under gas, gear and rpm moving.

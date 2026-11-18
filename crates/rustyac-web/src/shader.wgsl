@@ -54,6 +54,7 @@ struct MeshOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) normal: vec3<f32>,
     @location(1) world: vec3<f32>,
+    @location(2) local: vec3<f32>,
 };
 
 struct ModelOut {
@@ -102,11 +103,19 @@ fn vs_mesh(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>) -> MeshO
     o.pos = u.proj * (u.world_view * p);
     o.normal = (u.world * vec4<f32>(normal, 0.0)).xyz;
     o.world = (u.world * p).xyz;
+    o.local = pos;
     return o;
 }
 
 @fragment
 fn fs_mesh(i: MeshOut) -> @location(0) vec4<f32> {
+    if (u.params.w > 0.5) {
+        // a car's shadow: the flat box's top face as a soft oval, dark in the middle and gone at the rim
+        let q = i.local.xz * 2.0;
+        let r = length(q);
+        let a = 1.0 - smoothstep(0.5, 1.0, r);
+        return vec4<f32>(0.0, 0.0, 0.0, u.color.a * a);
+    }
     let n = normalize(i.normal);
     let lit = saturate(dot(n, -u.light.xyz));
     let c = with_lamps(u.color.rgb * (u.light.w + (1.0 - u.light.w) * lit), i.world, n);

@@ -729,8 +729,8 @@ impl Gpu {
             z_min = z_min.min(b.centre[2] - b.size[2] * 0.5);
             z_max = z_max.max(b.centre[2] + b.size[2] * 0.5);
         }
-        let shadow = mul(&scale_then(x_max * 2.0, 0.002, z_max - z_min, &translation(0.0, 0.0, (z_max + z_min) * 0.5)), &flat);
-        let offset = self.push(&DrawConstants { world: shadow, color: [0.0, 0.0, 0.0, 0.42], ..*base });
+        let shadow = mul(&scale_then(x_max * 3.0, 0.002, (z_max - z_min) * 1.5, &translation(0.0, 0.0, (z_max + z_min) * 0.5)), &flat);
+        let offset = self.push(&DrawConstants { world: shadow, color: [0.0, 0.0, 0.0, 0.7], params: [0.0, 0.0, 0.0, 1.0], ..*base });
         self.calls.push(DrawCall { pipeline: (0, 0), group: None, mesh: self.cube, index_count: self.cube_vertices, offset });
     }
 

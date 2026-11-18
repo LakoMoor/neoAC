@@ -1105,7 +1105,7 @@ impl Game {
              \"lap_ms\": {}, \"last_ms\": {}, \"best_ms\": {}, \"laps\": {}, \"valid\": {}, \"position\": {:.4}, \"in_pit_lane\": {}, \
              \"tc\": {}, \"abs\": {}, \"drs\": {}, \"auto_shifter\": {}, \"device\": {}, \"camera\": {}, \"seconds\": {:.2}, \"fuel\": {:.1}, \
              \"tc_text\": {}, \"abs_text\": {}, \"bias_text\": {}, \"tc_level\": {}, \"tc_levels\": {}, \"tc_fitted\": {}, \
-             \"abs_level\": {}, \"abs_levels\": {}, \"abs_fitted\": {}, \"brake_bias\": {:.6}, \"note\": {}, \"online\": {}, \"referee\": {}, \"camera_settings\": {}, \"look\": {}, \"onboard_fov\": {:?}, \"head\": {:?}, \"track_camera\": {}, \"cinematic\": {}}}",
+             \"abs_level\": {}, \"abs_levels\": {}, \"abs_fitted\": {}, \"brake_bias\": {:.6}, \"note\": {}, \"online\": {}, \"referee\": {}, \"camera_settings\": {}, \"look\": {}, \"onboard_fov\": {:?}, \"head\": {:?}, \"track_camera\": {}, \"cinematic\": {}, \"lights\": {}}}",
             n(v.speed_kmh),
             v.gear,
             n(v.rpm),
@@ -1157,7 +1157,8 @@ impl Game {
                     c.fov, c.use_cinematic_features, full.motion_blur_enabled(), &shot.matrix[3][..3], &shot.matrix[2][..3]
                 ),
                 _ => "null".to_string(),
-            }
+            },
+            v.lights
         )
     }
 

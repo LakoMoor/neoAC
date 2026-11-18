@@ -195,6 +195,7 @@ footer { border-top: 1px solid var(--line); padding-top: 10px; color: var(--dim)
 #hud-info { position: absolute; right: 18px; top: 40px; text-align: right; white-space: pre; }
 #hud-aids { position: absolute; right: 18px; top: 14px; text-align: right; white-space: pre; font-size: 16px; }
 #hud-aids span { margin-left: 16px; }
+#hud-lights { position: absolute; left: 50%; transform: translateX(-50%); bottom: 118px; color: #ffc400; font-weight: 700; font-size: 14px; letter-spacing: .08em; text-shadow: 0 0 8px #ffc40088; }
 #hud-aids span.acting { color: var(--accent); font-weight: 700; }
 #hud-note {
   position: absolute;

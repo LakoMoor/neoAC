@@ -2047,7 +2047,7 @@ const KEY_LIST =
   'TC up, down     T, Shift+T   D-pad up, down\n' +
   'ABS up, down    Y, Shift+Y   Back + D-pad up, down\n' +
   'brake bias fwd, back   ], [   D-pad right, left\n' +
-  'pits R   track Shift+R   view F1 / C   new car N\n' +
+  'lights L   pits R   track Shift+R   view F1 / C   new car N\n' +
   'gearbox G   pause P   menu Esc   controls O   this list H';
 let keysTimer = 0;
 
@@ -2057,7 +2057,7 @@ function keyList() {
   return (
     controlsNow.layout.map((line) => `${line.what.padEnd(width)}   ${line.keys}   |   ${line.pad}`).join('\n') +
     '\nABS up, down    Y, Shift+Y   Back + traction-control buttons\n' +
-    'pits R   track Shift+R   view F1 / C   new car N\n' +
+    'lights L   pits R   track Shift+R   view F1 / C   new car N\n' +
     'gearbox G   pause P   menu Esc   controls O   this list H' +
     (hasGui() ? "\nAC's menu Esc (Exit in it: the page's menu)   apps Ctrl+H, the bar on the right edge   desktops Ctrl+U   console Home   table Tab" : '')
   );
@@ -2157,6 +2157,9 @@ function showHud(hud) {
     `${hud.camera} view   ${hud.device}\n` +
     `${hud.auto_shifter ? 'automatic' : 'manual'} gearbox${hud.drs ? '   DRS' : ''}\n` +
     `lap ${hud.laps + 1}${hud.valid ? '' : ' (not valid)'}${hud.in_pit_lane ? '   pit lane' : ''}${state.paused ? '\nPAUSED (P)' : ''}`);
+  for (const el of document.querySelectorAll('#touch .lights')) el.classList.toggle('on', !!hud.lights);
+  const lamp = $('hud-lights');
+  if (lamp && lamp.hidden === !!hud.lights) lamp.hidden = !hud.lights;
   put('hud-tc', hud.tc_text);
   $('hud-tc').classList.toggle('acting', hud.tc);
   put('hud-abs', hud.abs_text);

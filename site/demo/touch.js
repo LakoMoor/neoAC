@@ -26,6 +26,7 @@ const STYLE = `
 #touch.on{display:block}
 #touch .pad{position:absolute;pointer-events:auto;display:grid;place-items:center;border-radius:22px;border:2px solid #ffffff55;
   background:#0009;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);touch-action:none;transition:background .08s,transform .08s}
+#touch .pad.on{background:#ffc400dd;color:#1a1200;border-color:#ffe27a}
 #touch .pad.held{background:#ff3b30cc;transform:scale(.96)}
 #touch .pad b{font-size:26px;font-weight:700}
 #touch .pad small{display:block;font-size:11px;opacity:.75;margin-top:4px;font-weight:600;letter-spacing:.04em}

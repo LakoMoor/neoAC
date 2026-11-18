@@ -228,6 +228,10 @@ sessions={}
         while sim.car.device.source.in_spawn_sequence() && !sim.car.car.is_controls_locked {
             sim.step()?;
         }
+        // (dusk and night: the driver starts with the headlights on, as one would)
+        if LOOK_OVERRIDE.with(|l| l.borrow().as_ref().is_some_and(|(angle, _)| angle.abs() > 65.0)) {
+            sim.car.car.lights_on = true;
+        }
         // the other cars: race.ini's (AI drivers) first, then the server's, as `opponent_infos`
         let remote_shapes: Vec<CarShape> = sim.opponent_infos().iter().map(CarShape::of).collect();
         let remote: Vec<CarView> = (0..remote_shapes.len()).map(|index| other_view(&sim, index, 0.0)).collect();
