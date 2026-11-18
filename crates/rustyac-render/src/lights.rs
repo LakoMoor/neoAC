@@ -145,8 +145,7 @@ impl CarBrakeLights {
 
     /// `CarBrakeLights::CarBrakeLights` 0x1400ddbb0 with `loadLights` 0x1400de0b0.
     pub fn new(graphics: &mut Graphics, scene: &mut Scene, folder: &Path, body_transform: NodeId) -> Result<CarBrakeLights, String> {
-        let mut lights = CarBrakeLights::default();
-        lights.soft = !folder.join("animations/lights.ksanim").vfs_is_file();
+        let mut lights = CarBrakeLights { soft: !folder.join("animations/lights.ksanim").vfs_is_file(), ..Default::default() };
         if let Ok(ini) = IniReader::load(&folder.join("data/lights.ini")) {
             let mut version = 1;
             if ini.has_section("HEADER") {
