@@ -149,3 +149,11 @@ Frame rate with it, nevadadrift at night in rain with headlights, 1920x1080: 59.
 - `checks/night_rain_all_12.jpg`: all 12 track-and-car pairs at night in rain, seen from behind: the headlight beams lie on the road for every pair and the
   tail lamps glow red and are mirrored in the wet road on all four cars (the lamp model takes the brake lamps' colour at a third when the pedal is up, so the
   GT-R's and Skyline's tail lamps read too).
+
+## Final re-checks
+
+- Flicker on video (30 fps, 120 frames each, foliage strip), now on three scenes and both builds: akina day (0.27 before / 0.25 after, flipping pixels 0.000 %),
+  drift day (0.064 / 0.066; 0.0001 % / 0.0002 %) and drift sunset (0.107 / 0.096; 0.0031 % / 0.0023 %). No shimmer in either build.
+- Frame rate after the tail-lamp change, 1920x1080, static cube map, measured while the Mac was heavily loaded by other jobs (load average about 11): drift day
+  59.9, drift night rain with lamps 52.8-57.5, nevadadrift day 52.8-55.7, mount_akina_2017 day 58.1-58.2, nevadadrift and mount_akina_2017 night rain with lamps
+  33-40. These runs are not comparable with the quiet ones above (59-60 on the same scenes); on a quiet Mac the scenes held 56-60.
