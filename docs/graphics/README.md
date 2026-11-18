@@ -119,3 +119,22 @@ headlights at 45-52 fps while another job loaded the Mac. AC's six-face live cub
 The glare is there in every look; it is gentle and strongest where a few very bright spots stand in a dark picture (night in rain: 1.7 levels in the ring,
 up to 148 at the lamps). The wet road at night in front of the car, with poles, trees and the car mirrored: `checks/wet_road_night_front.png`;
 the lamps' own lens glow is not mirrored (the lenses barely glow in the frame, so the road shows the light pool and the poles, not the lamps).
+
+## Bloom on every track and car (day, and night in rain with lamps; GLARE on vs off; mean change in the 40 px ring around pixels above 200 / largest change)
+
+| track | car | day | night, rain |
+|---|---|---|---|
+| drift | ks_nissan_gtr | 0.17 / 91 | 0.64 / 145 |
+| drift | ks_lamborghini_huracan_performante | 0.21 / 107 | 0.01 / 86 |
+| drift | tw_mitsubishi_evo6_tme | 0.35 / 113 | 1.57 / 156 |
+| drift | ks_nissan_skyline_r34 | 0.14 / 202 | 0.01 / 27 |
+| nevadadrift | ks_nissan_gtr | 0.12 / 111 | 1.65 / 143 |
+| nevadadrift | ks_lamborghini_huracan_performante | 0.08 / 81 | 1.22 / 131 |
+| nevadadrift | tw_mitsubishi_evo6_tme | 0.09 / 206 | 1.73 / 139 |
+| nevadadrift | ks_nissan_skyline_r34 | 0.09 / 63 | 1.25 / 146 |
+| mount_akina_2017 | ks_nissan_gtr | 0.62 / 109 | 1.64 / 132 |
+| mount_akina_2017 | ks_lamborghini_huracan_performante | 0.43 / 86 | 0.83 / 139 |
+| mount_akina_2017 | tw_mitsubishi_evo6_tme | 0.34 / 80 | 0.58 / 138 |
+| mount_akina_2017 | ks_nissan_skyline_r34 | 0.83 / 220 | 0.29 / 134 |
+
+The glare shows in all 24 pairs (largest change 27-220 levels of 255). It is gentle on average and strongest at night, where a few bright lamps stand in a dark picture.
