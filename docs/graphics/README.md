@@ -157,3 +157,7 @@ Frame rate with it, nevadadrift at night in rain with headlights, 1920x1080: 59.
 - Frame rate after the tail-lamp change, 1920x1080, static cube map, measured while the Mac was heavily loaded by other jobs (load average about 11): drift day
   59.9, drift night rain with lamps 52.8-57.5, nevadadrift day 52.8-55.7, mount_akina_2017 day 58.1-58.2, nevadadrift and mount_akina_2017 night rain with lamps
   33-40. These runs are not comparable with the quiet ones above (59-60 on the same scenes); on a quiet Mac the scenes held 56-60.
+
+- `checks/bloom_off_vs_on_6_looks.jpg`: the six looks, each as glare off (left) and glare on (right). Looked at by eye, the pairs are almost the same: AC's glare is
+  there (see the numbers above) but so gentle that it is hard to see at this size. A stronger bloom of our own was tried and cost 7-10 fps, so it was not kept.
+  Bloom is therefore present but weak, not a visible feature of these frames.
