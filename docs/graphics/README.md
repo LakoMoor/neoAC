@@ -29,18 +29,17 @@ checked in Chrome by day; night lights and the WebGL2 picture are not checked).
 
 ## Frame rate at 1920×1080, High preset, M4 (8 s runs, `rustyac-play --quit-after`; capped at 60)
 
-| Scene | fps |
-|-------|-----|
-| drift, any weather and hour, lamps on, live cube map (6 faces) | 60.0 |
-| nevadadrift, day clear, static cube map (the default `video.ini` has no `[CUBEMAP]`) | 60.0 |
-| nevadadrift, day clear, live cube map 6 / 2 / 1 faces per frame | 41 / 53 / 56 |
-| nevadadrift, dusk dry, static cube map | 56 |
-| nevadadrift, rain, static cube map (after trimming the wet-road ray walk to 12 steps) | 52 |
-| nevadadrift, rain + headlights, static cube map | 44–46 |
-| nevadadrift, rain + headlights, live cube map (6 faces) | 33–37 |
-| mount_akina_2017, day, live cube map 6 faces | 42–45 |
+The wet-road ray walk was the whole cost of rain (60 fps with it off); it is now 8 steps and skips far road.
 
-So the 60 fps goal holds on the light track and on a dry day on the heavy ones with the default settings; rain with headlights on nevadadrift
-and akina, and AC's own High preset's six cube-map faces per frame, run at 33–46 fps. Lowering `FACES_PER_FRAME` to 1–2 buys back most of
-the cube map's cost. The present pass was already trimmed (headlight light is worked out only inside the beams, the wet-road ray walk
-is 12 steps); what is left is the scene, the depth copy and the screen-space passes.
+| Scene (Nissan GT-R unless said) | static cube map (default `video.ini`) | live cube map, 2 faces | live, 6 faces (High preset) |
+|---|---|---|---|
+| nevadadrift, day | 60.0 | 54 | 46 |
+| nevadadrift, night, rain, headlights | 60.0 | 40 | 36 |
+| mount_akina_2017, day | 60.0 | 56 | 46 |
+| mount_akina_2017, night, rain, headlights | 59.6 | 49 | 43 |
+| drift, every weather (earlier runs) | 60.0 | | 60.0 |
+| nevadadrift, Huracán, night, rain, headlights | 42–45 (the scene is 53 even with no rain and no lamps) | 36 | 29 |
+
+With the default settings (no `[CUBEMAP]` in `video.ini`) the goal holds on every scene but the Huracán on nevadadrift in rain
+with headlights. AC's live cube map (`FACES_PER_FRAME`, six faces in the High preset) costs 10–25 fps on the heavy tracks; paint
+and glass now mirror the scene through the screen-space pass, so the static cube map costs no look.

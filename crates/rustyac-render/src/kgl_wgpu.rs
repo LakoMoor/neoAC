@@ -1767,9 +1767,10 @@ fn boxcut(lo: vec3<f32>, ld: vec3<f32>, centre: vec3<f32>, half: vec3<f32>, tt: 
                                         let t_ = gain.a[24].w; let asp = gain.a[25].w;
                                         var refl = vec3<f32>(0.0);
                                         var found = 0.0;
-                                        var tt = 0.25;
-                                        for (var s = 0; s < 12; s = s + 1) {{
-                                            tt = tt * 1.36;
+                                        var tt = 0.4;
+                                        for (var s = 0; s < 8; s = s + 1) {{
+                                            tt = tt * 1.55;
+                                            if (length(hit - cam) > 60.0) {{ break; }}
                                             let pp = hit + rdir * tt;
                                             let rel = pp - cam;
                                             let zc = dot(rel, gain.a[26].xyz);
