@@ -2000,7 +2000,43 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
                                         let sun_glint = (pow(nh, 220.0) * 1.6 + pow(nh, 40.0) * 0.12) * day * smoothstep(0.0, 0.15, gain.a[30].y);
                                         let rim = pow(1.0 - max(dot(n, eye), 0.0), 4.0) * 0.22 * (0.25 + 0.75 * day);
                                         let sky = mix(vec3<f32>(0.10, 0.12, 0.2), vec3<f32>(0.55, 0.7, 0.95), day * clamp(n.y * 0.5 + 0.6, 0.0, 1.0));
-                                        c = vec4<f32>(c.rgb + vec3<f32>(1.0, 0.96, 0.88) * sun_glint + sky * rim, c.a);
+                                        // what the paint and the glass mirror: the eye's ray bounced off the surface, walked through the picture
+                                        // (the depth tells where it meets the scene); what it misses is the sky
+                                        let vdir = -eye;
+                                        let rdir = reflect(vdir, n);
+                                        let t_ = gain.a[24].w; let asp = gain.a[25].w;
+                                        let cam = gain.a[27].xyz;
+                                        var refl = vec3<f32>(0.0);
+                                        var found = 0.0;
+                                        var tt = 0.2;
+                                        for (var s = 0; s < 32; s = s + 1) {{
+                                            tt = tt * 1.15;
+                                            let pp = hit + n * 0.05 + rdir * tt;
+                                            let rel = pp - cam;
+                                            let zc = dot(rel, gain.a[26].xyz);
+                                            if (zc < 0.1) {{ break; }}
+                                            let suv = vec2<f32>(dot(rel, gain.a[24].xyz) / (zc * t_ * asp) * 0.5 + 0.5, 0.5 - dot(rel, gain.a[25].xyz) / (zc * t_) * 0.5);
+                                            if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) {{ break; }}
+                                            let zs = zlin(textureLoad(dep, vec2<i32>(suv * dims), 0).r);
+                                            if (zc > zs && zc < zs + 2.0 + 0.1 * zs) {{
+                                                // (not the car's own body, which would mirror itself)
+                                                let q = pp - gain.a[10].xyz;
+                                                let ql = vec3<f32>(dot(q, gain.a[7].xyz), dot(q, gain.a[8].xyz), dot(q, gain.a[9].xyz));
+                                                let own = all(abs(ql - gain.a[20].xyz) < gain.a[21].xyz + vec3<f32>(0.1)) || all(abs(ql - gain.a[22].xyz) < gain.a[23].xyz + vec3<f32>(0.1));
+                                                if (!own) {{
+                                                    refl = textureSampleLevel(src, smp, suv, 0.0).rgb;
+                                                    found = smoothstep(0.0, 0.08, min(min(suv.x, 1.0 - suv.x), min(suv.y, 1.0 - suv.y)));
+                                                }}
+                                                break;
+                                            }}
+                                        }}
+                                        let sky_s = textureSampleLevel(src, smp, vec2<f32>(v.uv.x, 0.04 + 0.18 * v.uv.y), 0.0).rgb;
+                                        refl = mix(sky_s * smoothstep(-0.2, 0.4, rdir.y) + sky * 0.25 * (1.0 - smoothstep(-0.2, 0.4, rdir.y)), refl, found);
+                                        let luma = dot(c.rgb, vec3<f32>(0.3, 0.59, 0.11));
+                                        // glass is dark and mirrors more; paint mirrors at grazing angles
+                                        let fres = 0.04 + 0.96 * pow(1.0 - max(dot(n, eye), 0.0), 4.0);
+                                        let strength = mix(0.9, 0.35, smoothstep(0.05, 0.5, luma)) * fres + 0.05;
+                                        c = vec4<f32>(c.rgb + vec3<f32>(1.0, 0.96, 0.88) * sun_glint + sky * rim * 0.5 + refl * strength * (0.6 + 0.4 * day), c.a);
                                     }}
                                 }}
                             }}
