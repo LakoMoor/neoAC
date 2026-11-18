@@ -327,6 +327,14 @@ struct Replay {
     depth_copy: Option<wgpu::RenderPipeline>,
     depth_copy_ms: Option<wgpu::RenderPipeline>,
     warned: std::collections::HashSet<String>,
+    /// the texture and sampler bind groups of earlier frames (a draw with the same program and the same resources reuses one)
+    group_cache: HashMap<GroupKey, (wgpu::BindGroup, Rc<Program>, u64)>,
+}
+
+#[derive(PartialEq, Eq, Hash)]
+enum GroupKey {
+    Textures(usize, Vec<(u32, wgpu::TextureView)>),
+    Samplers(usize, Vec<(u32, wgpu::Sampler)>),
 }
 
 /// No queries on this backend.
@@ -534,6 +542,7 @@ impl Kgl {
                 depth_copy: None,
                 depth_copy_ms: None,
                 warned: Default::default(),
+                group_cache: HashMap::new(),
             }),
             dummy_2d,
             dummy_cube,
@@ -2407,6 +2416,12 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
             self.queue.write_buffer(&b, 0, &upload);
             b
         });
+        let frame = replay.epoch;
+        let mut cache = std::mem::take(&mut replay.group_cache);
+        if frame % 256 == 0 {
+            // (groups not used for a few frames go, with the views they hold)
+            cache.retain(|_, v| frame.saturating_sub(v.2) < 512);
+        }
         let groups: Vec<[wgpu::BindGroup; 3]> = pass
             .draws
             .iter()
@@ -2421,9 +2436,19 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
                     .collect();
                 let tx: Vec<wgpu::BindGroupEntry> = d.textures.iter().map(|(slot, v)| wgpu::BindGroupEntry { binding: *slot, resource: wgpu::BindingResource::TextureView(v) }).collect();
                 let sm: Vec<wgpu::BindGroupEntry> = d.samplers.iter().map(|(slot, s)| wgpu::BindGroupEntry { binding: *slot, resource: wgpu::BindingResource::Sampler(s) }).collect();
-                [cb, tx, sm].iter().enumerate().map(|(i, e)| self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &d.program.groups[i], entries: e })).collect::<Vec<_>>().try_into().unwrap()
+                let make = |i: usize, e: &Vec<wgpu::BindGroupEntry>| self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &d.program.groups[i], entries: e });
+                let program = Rc::as_ptr(&d.program) as usize;
+                let mut cached = |key: GroupKey, i: usize, e: &Vec<wgpu::BindGroupEntry>| {
+                    let entry = cache.entry(key).or_insert_with(|| (make(i, e), d.program.clone(), frame));
+                    entry.2 = frame;
+                    entry.0.clone()
+                };
+                let tg = cached(GroupKey::Textures(program, d.textures.clone()), 1, &tx);
+                let sg = cached(GroupKey::Samplers(program, d.samplers.clone()), 2, &sm);
+                [make(0, &cb), tg, sg]
             })
             .collect();
+        replay.group_cache = cache;
         let encoder = Kgl::encoder(&self.device, &mut replay);
         let color = pass.color.as_ref().map(|v| wgpu::RenderPassColorAttachment { view: &v.0.view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } });
         let depth = pass.depth.as_ref().map(|v| wgpu::RenderPassDepthStencilAttachment { view: &v.0.view, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }), stencil_ops: None });

@@ -173,3 +173,31 @@ Frame rate with it, nevadadrift at night in rain with headlights, 1920x1080: 59.
 - Lights: the Lights button (key L) now lights up when the lamps are on, the display says LIGHTS, and the driver starts with them on at dusk and night
   (`checks/web_night_lights_on.jpg`, taken with `?hour=18.8`). The key list now mentions L. The speedometer and tachometer were checked live on the demo (WebGPU and
   WebGL2, phone and desktop size): 34-71 km/h under gas, gear and rpm moving.
+
+## Frame rate, measured again after three fixes (1920x1080, 12 track-and-car pairs, night in rain with lamps and sunset)
+
+The earlier numbers (33-50 fps on nevadadrift and akina at night) were not noise. Profiling found three costs and all three are now fixed:
+
+1. **The shadow map at 4096.** The High preset asked for a 4096 map; at night, with a low sun, that alone cost 15 fps on akina (44 fps at 4096, 59.8 at 2048, 60 at 1024, same
+   picture otherwise). The two sizes look the same at 1080p (`checks/shadow_2048_vs_4096.jpg`), so High now uses 2048 (4096 is still in the launcher's list).
+2. **Bind groups rebuilt for every draw, every frame.** The texture and sampler groups are now cached (`kgl_wgpu.rs`), nevadadrift at sunset went from 51 to 60 fps.
+3. **The physics broad phase** walked each space's list from its head for every member (quadratic). It now walks it once, with the same pair order (the physics tests pass).
+
+Result (fps, the Mac loaded 4-5 by other jobs the whole time):
+
+| scene | night, rain, lamps | sunset |
+|---|---|---|
+| drift ks_nissan_gtr | 59.9 | 60.0 |
+| drift ks_lamborghini_huracan_performante | 60.0 | 60.0 |
+| drift tw_mitsubishi_evo6_tme | 59.9 | 59.9 |
+| drift ks_nissan_skyline_r34 | 60.0 | 60.0 |
+| nevadadrift ks_nissan_gtr | 58.3 | 60.0 |
+| nevadadrift ks_lamborghini_huracan_performante | 55.9 | 60.0 |
+| nevadadrift tw_mitsubishi_evo6_tme | 59.8 | 60.0 |
+| nevadadrift ks_nissan_skyline_r34 | 56.5 | 60.0 |
+| mount_akina_2017 ks_nissan_gtr | 59.8 | 60.0 |
+| mount_akina_2017 ks_lamborghini_huracan_performante | 59.9 | 60.0 |
+| mount_akina_2017 tw_mitsubishi_evo6_tme | 60.0 | 60.0 |
+| mount_akina_2017 ks_nissan_skyline_r34 | 60.0 | 59.7 |
+
+22 of the 24 runs are at 59.7-60 fps; the two lowest are nevadadrift at night in rain with the Huracan (55.9) and the Skyline (56.5).

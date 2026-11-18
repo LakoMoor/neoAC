@@ -629,14 +629,12 @@ impl BroadPhase<'_> {
     pub fn space_collide(&mut self, space: GeomRef, callback: &mut dyn NearCallback) {
         self.clean_geoms(space);
         // intersect all bounding boxes
-        let count = self.count(space);
-        for i in 0..count {
-            let g1 = self.member(space, i);
+        let members = self.members(space);
+        for (i, &g1) in members.iter().enumerate() {
             if !self.enabled(g1) {
                 continue;
             }
-            for k in i + 1..count {
-                let g2 = self.member(space, k);
+            for &g2 in &members[i + 1..] {
                 if self.enabled(g2) {
                     self.collide_aabbs(g1, g2, false, callback);
                 }
@@ -644,16 +642,54 @@ impl BroadPhase<'_> {
         }
     }
 
+    /// The members of a space in list order (the same as `member(space, 0..count)`, in one walk).
+    fn members(&self, space: GeomRef) -> Vec<GeomRef> {
+        match space {
+            GeomRef::Dyn(id) => {
+                let GeomKind::SimpleSpace { first, count } = self.collision.geoms[id.0 as usize].kind else {
+                    panic!("not a space");
+                };
+                let mut out = Vec::with_capacity(count as usize);
+                let mut cursor = first;
+                for _ in 0..count {
+                    let g = cursor.expect("a member");
+                    out.push(GeomRef::Dyn(g));
+                    cursor = self.collision.geoms[g.0 as usize].next;
+                }
+                out
+            }
+            _ => (0..self.count(space)).map(|i| self.member(space, i)).collect(),
+        }
+    }
+
     /// `dxSimpleSpace::collide2` @ 0x140342a60: every member of `space` against `geom`.
     fn collide2(&mut self, space: GeomRef, geom: GeomRef, swap: bool, callback: &mut dyn NearCallback) {
         self.clean_geoms(space);
         self.recompute_aabb(geom);
-        // intersect bounding boxes
-        let count = self.count(space);
-        for i in 0..count {
-            let g = self.member(space, i);
-            if self.enabled(g) {
-                self.collide_aabbs(g, geom, swap, callback);
+        // intersect bounding boxes (`collideAABBs` for each member, with what is the same for
+        // all of them worked out once)
+        let body2 = self.body(geom);
+        let (cat2, col2) = self.bits(geom);
+        let aabb2 = self.aabb(geom);
+        for g in self.members(space) {
+            if !self.enabled(g) {
+                continue;
+            }
+            let body1 = self.body(g);
+            if body1.is_some() && body1 == body2 {
+                continue;
+            }
+            let (cat1, col1) = self.bits(g);
+            if cat1 & col2 == 0 && cat2 & col1 == 0 {
+                continue;
+            }
+            if !boxes_meet(&self.aabb(g), &aabb2) {
+                continue;
+            }
+            if swap {
+                callback.near(self, geom, g);
+            } else {
+                callback.near(self, g, geom);
             }
         }
     }
