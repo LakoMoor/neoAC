@@ -2395,6 +2395,8 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
     }
 
     /// Encodes the pass being recorded.
+    // (the group cache's keys are wgpu handles: they hash by identity, which does not change)
+    #[allow(clippy::mutable_key_type)]
     fn end_pass(&self) {
         let mut replay = self.replay.borrow_mut();
         let Some(pass) = replay.pass.take() else {
@@ -2418,7 +2420,7 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
         });
         let frame = replay.epoch;
         let mut cache = std::mem::take(&mut replay.group_cache);
-        if frame % 256 == 0 {
+        if frame.is_multiple_of(256) {
             // (groups not used for a few frames go, with the views they hold)
             cache.retain(|_, v| frame.saturating_sub(v.2) < 512);
         }
