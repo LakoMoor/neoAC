@@ -262,19 +262,24 @@ fn the_cars_data_agrees_with_the_cars_own_spec_sheet() {
             bad.push(format!("{}: engine.ini POWER_CURVE={curve_file} is empty or missing", car.name));
             continue;
         }
-        let peak_ps = curve.iter().map(|(rpm, nm)| nm * rpm * std::f64::consts::TAU / 60.0 / 735.5).fold(0.0f64, f64::max);
-        let turbo = engine.has_section("TURBO_0");
+        // the curve is the engine without boost; each turbo multiplies the torque by 1 + its wastegate level (its max boost when it has no wastegate)
+        let boost: f64 = (0..4)
+            .map(|n| format!("TURBO_{n}"))
+            .filter(|sec| engine.has_section(sec))
+            .map(|sec| {
+                let gate = engine.get_float(&sec, "WASTEGATE").unwrap_or(0.0);
+                f64::from(if gate > 0.0 { gate } else { engine.get_float(&sec, "MAX_BOOST").unwrap_or(0.0) })
+            })
+            .sum();
+        let peak_ps = curve.iter().map(|(rpm, nm)| nm * (1.0 + boost) * rpm * std::f64::consts::TAU / 60.0 / 735.5).fold(0.0f64, f64::max);
+        let turbo = boost > 0.0;
         let mass = ini(&car, "car.ini").and_then(|i| i.get_float("BASIC", "TOTALMASS").ok()).map(f64::from);
         table.push(format!("{:36} curve peak {:6.0} ps{} spec {:?} bhp | car.ini mass {:?} spec {:?} kg", car.name, peak_ps, if turbo { " (+turbo)" } else { "" }, spec("bhp"), mass.map(|m| m.round()), spec("weight")));
         if let Some(bhp) = spec("bhp") {
             let ratio = peak_ps / bhp;
-            // (bhp 1.0139 ps; the curves of the game are crank power, the sheets are rounded)
-            if turbo {
-                if ratio > 1.15 {
-                    bad.push(format!("{}: the curve alone ({peak_ps:.0} ps) is above the sheet's {bhp} bhp", car.name));
-                }
-            } else if !(0.8..=1.2).contains(&ratio) {
-                bad.push(format!("{}: the power curve peaks at {peak_ps:.0} ps, the sheet says {bhp} bhp", car.name));
+            // (the sheets are rounded and quote crank power; the game's curves with the boost land within a quarter of them)
+            if !(0.75..=1.25).contains(&ratio) {
+                bad.push(format!("{}: the power curve with its boost peaks at {peak_ps:.0} ps, the sheet says {bhp} bhp", car.name));
             }
         }
         if let (Some(m), Some(w)) = (mass, spec("weight")) {
