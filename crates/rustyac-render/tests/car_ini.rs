@@ -191,7 +191,8 @@ fn every_car_with_lights_has_a_headlight_and_a_brake_lamp_bright_enough_to_find(
 #[test]
 fn the_files_the_simulation_starts_from_hold_their_keys() {
     // (file, section, key, what it must be)
-    let checks: [(&str, &str, &str, fn(&IniReader, &str, &str) -> bool); 9] = [
+    type Check = fn(&IniReader, &str, &str) -> bool;
+    let checks: [(&str, &str, &str, Check); 9] = [
         ("car.ini", "BASIC", "TOTALMASS", |i, s, k| i.get_float(s, k).is_ok_and(|v| v > 100.0 && v < 20000.0)),
         ("car.ini", "BASIC", "INERTIA", |i, s, k| i.get_float3(s, k).is_ok()),
         ("engine.ini", "ENGINE_DATA", "LIMITER", |i, s, k| i.get_float(s, k).is_ok_and(|v| v > 1000.0)),

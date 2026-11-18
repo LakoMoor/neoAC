@@ -8,6 +8,7 @@
 <meta property="og:title" content="neoAC — Assetto Corsa, native on Mac and Linux">
 <meta property="og:description" content="Rust, wgpu, Metal. A native Assetto Corsa build with its own launcher, sound mixer and lighting. Built on rustyAC.">
 <meta property="og:image" content="img/hero.jpg">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -30,9 +31,10 @@ h1,h2,h3{font-family:"Space Grotesk",Inter,sans-serif;line-height:1.08;margin:0;
 .grad{background:linear-gradient(95deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
 
 /* nav */
-nav{position:fixed;inset:0 0 auto 0;z-index:30;backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 70%,transparent);border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
+nav{position:fixed;inset:0 0 auto 0;z-index:30;backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 88%,transparent);border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
 nav .wrap{display:flex;align-items:center;height:62px;gap:28px}
-.logo{font:700 22px "Space Grotesk";text-decoration:none;letter-spacing:-.03em}
+.logo{font:700 22px "Space Grotesk";text-decoration:none;letter-spacing:-.03em;display:inline-flex;align-items:center;gap:10px}
+.logo img{border-radius:8px}
 .logo b{color:var(--accent)}
 nav .links{display:flex;gap:22px;margin-left:auto;font-size:14.5px;color:var(--mute)}
 nav .links a{text-decoration:none}
@@ -44,7 +46,7 @@ nav .links a:hover{color:var(--text)}
 
 /* hero */
 .hero{position:relative;min-height:min(100svh,880px);display:flex;align-items:flex-end;overflow:hidden;isolation:isolate}
-.hero img.bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 62%;z-index:-2;transform:scale(1.04);animation:drift 24s ease-in-out infinite alternate}
+.hero img.bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 70%;z-index:-2;transform:scale(1);animation:none}
 @keyframes drift{to{transform:scale(1.12) translate(-1.2%,-1%)}}
 .hero::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(to top,var(--bg) 4%,color-mix(in srgb,var(--bg) 55%,transparent) 42%,transparent 75%),linear-gradient(to right,color-mix(in srgb,var(--bg) 75%,transparent),transparent 60%)}
 .hero .wrap{padding-bottom:84px;padding-top:140px}
@@ -149,7 +151,7 @@ dialog button{position:absolute;top:-14px;right:-14px;width:38px;height:38px;bor
 
 <nav>
   <div class="wrap">
-    <a class="logo" href="#top">neo<b>AC</b></a>
+    <a class="logo" href="#top"><img src="logo.svg" alt="" width="30" height="30">neo<b>AC</b></a>
     <div class="links">
       <a href="#features">Features</a>
       <a href="#showcase">Showcase</a>

@@ -1490,7 +1490,7 @@ FILTER=default
             }
             out[60] = self.lamp_strength.max(0.4) * fade.max(0.35);
             self.lamps = out;
-            if std::env::var_os("RUSTYAC_LAMPS_TRACE").is_some() && (self.frames % 120 == 0 || (fade > 0.0 && fade < 1.0 && self.frames % 6 == 0)) {
+            if std::env::var_os("RUSTYAC_LAMPS_TRACE").is_some() && (self.frames.is_multiple_of(120) || (fade > 0.0 && fade < 1.0 && self.frames.is_multiple_of(6))) {
                 eprintln!("fade {fade:.2}");
                 eprintln!("lamps: ground {ground} cam {:?} lamp {:?} dir {:?} strength {}", &out[12..15], &out[16..19], &out[24..27], self.lamp_strength);
             }

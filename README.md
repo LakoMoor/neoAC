@@ -1,33 +1,56 @@
+<div align="center">
+
+<img src="site/logo.svg" width="120" alt="neoAC logo">
+
 # neoAC
 
-**Assetto Corsa, native on macOS and Linux.** neoAC runs the Assetto Corsa 1.16 engine as a real Mac and Linux program: written in Rust, drawn with wgpu (Metal on macOS, Vulkan on Linux), with its own sound mixer and a launcher. No Wine, no emulation.
+**Assetto Corsa, native on macOS and Linux.**
 
-**[Website](https://lakomoor.github.io/neoAC/)** · screenshots, features and status.
+Rust · wgpu (Metal / Vulkan) · own launcher · own sound mixer · no Wine, no emulation
 
-> **Built on [rustyAC](https://github.com/thesupersupersigma/rustyAC).** neoAC is not a fork of the game and not a new engine: it is built on rustyAC, the open-source Rust rewrite of Assetto Corsa by thesupersupersigma. The physics, the renderer and most of the code are theirs; licenses and copyright notices are kept (see [LICENSING.md](LICENSING.md)). rustyAC's own README is kept in [docs/RUSTYAC_README.md](docs/RUSTYAC_README.md).
+[![Website](https://img.shields.io/badge/website-lakomoor.github.io%2FneoAC-ff3b30?style=for-the-badge)](https://lakomoor.github.io/neoAC/)
+[![CI](https://img.shields.io/github/actions/workflow/status/LakoMoor/neoAC/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/LakoMoor/neoAC/actions)
+[![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue?style=for-the-badge)](LICENSING.md)
+
+<img src="site/img/rain_night.jpg" width="820" alt="Nissan GT-R at night in the rain, neoAC">
+
+</div>
+
+> [!NOTE]
+> **Built on [rustyAC](https://github.com/thesupersupersigma/rustyAC)** by thesupersupersigma, the open-source Rust rewrite of Assetto Corsa. neoAC is not a fork of a game and not a new engine: the physics, renderer and most of the code are rustyAC's, with licenses and notices kept. rustyAC's own README: [docs/RUSTYAC_README.md](docs/RUSTYAC_README.md).
 >
-> Not affiliated with or endorsed by Kunos Simulazioni or 505 Games. No game files are included: neoAC loads the cars, tracks, sounds and shaders from **your own legal copy** of Assetto Corsa 1.16.
+> Not affiliated with Kunos Simulazioni or 505 Games. No game files are included: you need your **own legal copy of Assetto Corsa 1.16**.
 
-## What neoAC adds on top
+## Screenshots
 
-- **macOS and Linux build** with a double-click start (`rustyac.command` / `rustyac.sh`).
-- **A launcher** (GPUI): cars and tracks with previews, skins, assists from newbie to pro, keys, graphics (`video.ini`), content (install a mod from a zip), weather, time of day and track grip, and a Shaders Patch page.
-- **Lights from the car's own data**: headlight pools, lamp positions and colours come from each car's `data/lights.ini` and meshes. Soft turn-on for cars that do not bring a `lights.ksanim`.
-- **Rain and wet roads**: rain anchored in the world, grip from the chosen track state.
-- **Chase camera**: right button turns it round the car and the turn stays (double right click brings it back), the wheel zooms.
-- **Walk out of the car**: **F**, first person (GTA style).
-- **Debug panel**: **F10**, frame times, telemetry, tyre contact points, brightness and detail distance.
-- **Own sound mixer** for the game's sound banks (no FMOD).
-- **Render density and a bicubic upscale with sharpening.**
-- **Data tests** across the cars: every `.ini` parses, `lights.ini` is well formed and names meshes the model has, key physics files hold their keys, power and weight agree with the car's spec sheet.
+| | |
+|---|---|
+| <img src="site/img/hero.jpg"> | <img src="site/img/r34_dusk.jpg"> |
+| <img src="site/img/huracan.jpg"> | <img src="site/img/launcher.jpg"> |
+
+## What neoAC adds
+
+| | |
+|---|---|
+| 🖥️ **Mac and Linux build** | double-click start (`rustyac.command` / `rustyac.sh`) |
+| 🚀 **Launcher** | cars, tracks, skins, assists, graphics, weather, time, grip, mods from a zip, Shaders Patch page |
+| 💡 **Lights from the model** | headlight pools and lamp colours from each car's `lights.ini` and meshes; soft turn-on |
+| 🌧️ **Rain and wet roads** | rain fixed in the world, grip from the track state |
+| 🎥 **Chase camera** | right button orbits and stays (double click resets), wheel zooms |
+| 🚶 **Walk out of the car** | **F**, first person, GTA style |
+| 🛠️ **Debug panel** | **F10**: frame times, telemetry, tyre contacts, brightness, detail distance |
+| 🔊 **Own sound mixer** | the game's sound banks without FMOD |
+| 🧪 **Data tests** | every car's `.ini` parses; power and weight agree with the spec sheet |
 
 ## Status
 
-A preview. Works: driving on macOS with the original renderer, HUD and menus (keyboard and mouse), the launcher, headlights, brake lamps, rain, walking, joining a Kunos `acServer` on the local network. Not yet: Linux is only compile-checked, gamepad, Python apps, turn signals (the base game has none and no car here defines them), exact sound, hosting a server from the game.
+**Works:** driving on macOS with the original renderer, HUD and menus (keyboard and mouse), launcher, lights, rain, walking, joining a Kunos `acServer` on the LAN.
+
+**Not yet:** Linux (compile-checked only), gamepad, Python apps, turn signals (the base game has none), exact sound, hosting a server from the game.
 
 ## Run it
 
-You need your own **Assetto Corsa 1.16** (the Windows files: `content` and `system`) and [Rust](https://rustup.rs).
+You need [Rust](https://rustup.rs) and your Assetto Corsa 1.16 folder (`content` and `system`).
 
 ```sh
 git clone https://github.com/LakoMoor/neoAC
@@ -41,8 +64,8 @@ cargo run --release -p rustyac-native -- --car ks_nissan_gtr --track drift
 sh packaging/package_unix.sh "$AC_ROOT"
 ```
 
-Options worth knowing: `--weather <preset>`, `--hour <0-23>`, `--grip <0.4-1>`, `--orbit <yaw>,<pitch>[,<distance>]`, `--debug-panel`, `--shot <png>`. Run `rustyac-play --help` for all of them.
+Useful options: `--weather <preset>` `--hour <0-23>` `--grip <0.4-1>` `--orbit <yaw>,<pitch>[,<dist>]` `--debug-panel` `--shot <png>`. See `--help`.
 
 ## License
 
-GPL-3.0-or-later for the game, physics, renderer, sound and launcher; parts under MIT OR Apache-2.0 and BSD-3-Clause. Details in [LICENSING.md](LICENSING.md). The screenshots on the website show Assetto Corsa's content and belong to their owners.
+GPL-3.0-or-later for the game, physics, renderer, sound and launcher; some parts MIT OR Apache-2.0 or BSD-3-Clause. See [LICENSING.md](LICENSING.md). Screenshots show Assetto Corsa content and belong to their owners.
