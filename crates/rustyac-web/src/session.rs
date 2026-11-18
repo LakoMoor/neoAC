@@ -54,6 +54,11 @@ pub struct FrameStats {
     pub dropped_seconds: f64,
 }
 
+thread_local! {
+    /// ?hour= and ?weather=: the sun angle (degrees, race.ini's SUN_ANGLE) and weather folder of the next drive
+    pub static LOOK_OVERRIDE: std::cell::RefCell<Option<(f32, String)>> = const { std::cell::RefCell::new(None) };
+}
+
 pub struct Session {
     pub sim: GameSim,
     pub input: SharedInput,
@@ -258,7 +263,15 @@ sessions={}
             console: Vec::new(),
             race_notes: Vec::new(),
             drive: String::new(),
-            look: RaceLook::of(None),
+            look: {
+                let mut look = RaceLook::of(None);
+                if let Some((angle, weather)) = LOOK_OVERRIDE.with(|l| l.borrow().clone()) {
+                    look.sun_angle = angle;
+                    look.sun_animation = Some((0.0, 0.2));
+                    look.weather = weather;
+                }
+                look
+            },
             tape: None,
             stop_at: None,
             chain: CHAIN_START,

@@ -620,6 +620,11 @@ function fillLists() {
   fillOptions(car, $('car-search'), state.cars, carLabel, (c) => c.id);
   fillOptions(track, $('track-search'), state.tracks, trackLabel, trackValue);
   car.disabled = track.disabled = false;
+  // ?hour=18.8&weather=7_heavy_clouds: dusk or night (AC's sun angle is (hour - 13) * 16 degrees)
+  if (params.has('hour') || params.has('weather')) {
+    const hour = parseFloat(params.get('hour') || '13');
+    if (rac.set_look) rac.set_look((hour - 13) * 16, params.get('weather') || '3_clear');
+  }
   const wantCar = params.get('car');
   const wantTrack = params.get('track');
   const firstCar = state.cars.find((c) => (wantCar ? c.id === wantCar : !c.refused));

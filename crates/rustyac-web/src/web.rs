@@ -32,6 +32,12 @@ thread_local! {
 
 /// Task 41b: the next drive's sound keeps a sound tape and its FMOD call log, for
 /// [`Game::sound_tape`] and [`Game::sound_end`] (a test hook).
+/// The next drive's sun angle (AC's `SUN_ANGLE`: (hour - 13) * 16) and weather, for a page that wants dusk or night.
+#[wasm_bindgen]
+pub fn set_look(sun_angle: f32, weather: String) {
+    crate::session::LOOK_OVERRIDE.with(|l| *l.borrow_mut() = Some((sun_angle, weather)));
+}
+
 #[wasm_bindgen]
 pub fn set_sound_tape(on: bool) {
     SOUND_TAPE.with(|t| t.set(on));

@@ -28,6 +28,13 @@ const FAR: f32 = 4000.0;
 const LIGHT: [f32; 4] = [-0.35, -0.80, -0.48, 0.42];
 /// Fog density per metre on a track.
 const FOG: f32 = 0.00022;
+
+/// How much light the sky gives: 1 by day, down to a night's 0.30 (`?hour=` sets the sun angle, `(hour - 13) * 16` degrees).
+fn daylight() -> f32 {
+    let angle = crate::session::LOOK_OVERRIDE.with(|l| l.borrow().as_ref().map(|(a, _)| *a)).unwrap_or(-16.0);
+    let day = 1.0 - ((angle.abs() - 40.0) / 45.0).clamp(0.0, 1.0);
+    0.30 + 0.70 * day
+}
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// One draw's constants, as `shader.wgsl` reads them.
@@ -744,7 +751,9 @@ impl Gpu {
         let view_matrix = view_matrix(&camera.matrix);
         let view_proj = mul(&view_matrix, &projection);
         let eye = camera.matrix[3];
-        let lamps = headlamps(view, shape);
+        let day = daylight();
+        let mut lamps = headlamps(view, shape);
+        lamps[2][3] = day;
         let base = DrawConstants {
             world: IDENTITY,
             world_view: view_matrix,
@@ -752,7 +761,7 @@ impl Gpu {
             color: [1.0; 4],
             light: LIGHT,
             camera: [eye[0], eye[1], eye[2], FOG],
-            fog: HORIZON,
+            fog: [HORIZON[0] * day, HORIZON[1] * day, HORIZON[2] * day, 1.0],
             params: [0.0; 4],
             mult_rg: [0.0; 4],
             mult_ba: [0.0; 4],
@@ -849,7 +858,7 @@ impl Gpu {
                     depth_slice: None,
                     resolve_target: resolve,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: HORIZON[0] as f64, g: HORIZON[1] as f64, b: HORIZON[2] as f64, a: 1.0 }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: (HORIZON[0] * day) as f64, g: (HORIZON[1] * day) as f64, b: (HORIZON[2] * day) as f64, a: 1.0 }),
                         store: if resolve.is_some() { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store },
                     },
                 })],

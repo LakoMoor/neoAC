@@ -57,3 +57,11 @@ and glass now mirror the scene through the screen-space pass, so the static cube
   of 255 on average. A bloom of our own in the present pass cost 7–10 fps and showed little, so it was left out.
 - Frame rates are sensitive to what else the Mac runs: with another process holding a core, the same scene measured 40–43 fps and 60 fps when idle.
   The table above is the best of repeated runs; AC's six-face live cube map is the one setting that costs a lot on its own.
+
+## Web demo at night (`web/`)
+
+`?hour=18.8&weather=7_heavy_clouds` (or any `hour`) sets the sun angle `(hour - 13) * 16` and the demo's debug picture darkens by it. In Chrome on the M4,
+with the Lights button tapped and the camera turned round the car by a one-finger drag (a touch swipe), both pictures, WebGPU
+(`night_headlights_webgpu.png`) and WebGL2 (`night_headlights_webgl2.png`), show the headlight beam on the ground and wall ahead of the nose;
+`night_lights_off_webgpu.png` is the same hour with the lights off. The demo's pack has no AC shaders, so it always draws the debug picture;
+AC's own renderer (Full) is not in the demo.

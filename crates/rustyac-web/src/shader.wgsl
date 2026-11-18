@@ -75,11 +75,13 @@ fn spot(lamp: vec3<f32>, world: vec3<f32>, n: vec3<f32>) -> f32 {
     let fall = 1.0 / (1.0 + dist * dist * 0.012);
     let facing = 0.2 + 0.8 * max(dot(n, -ldir), 0.0);
     // (not on the car's own nose)
-    return (0.3 * skirt + 0.9 * core) * fall * facing * smoothstep(0.8, 2.6, dist);
+    return 2.6 * (0.3 * skirt + 0.9 * core) * fall * facing * smoothstep(0.8, 2.6, dist);
 }
 
 // The colour c lit by the headlights (the surface's own colour decides how much it shows).
-fn with_lamps(c: vec3<f32>, world: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+fn with_lamps(c0: vec3<f32>, world: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    // (lamp_dir.w: how much daylight there is; the draw's colours are scaled by it, the lamps' light is not)
+    let c = c0 * u.lamp_dir.w;
     if (u.lamp0.w <= 0.0) {
         return c;
     }
