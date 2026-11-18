@@ -31,7 +31,7 @@ h1,h2,h3{font-family:"Space Grotesk",Inter,sans-serif;line-height:1.08;margin:0;
 .grad{background:linear-gradient(95deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
 
 /* nav */
-nav{position:fixed;inset:0 0 auto 0;z-index:30;backdrop-filter:blur(14px);background:color-mix(in srgb,var(--bg) 88%,transparent);border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
+nav{position:fixed;inset:0 0 auto 0;z-index:30;background:var(--bg);border-bottom:1px solid var(--line)}
 nav .wrap{display:flex;align-items:center;height:62px;gap:28px}
 .logo{font:700 22px "Space Grotesk";text-decoration:none;letter-spacing:-.03em;display:inline-flex;align-items:center;gap:10px}
 .logo img{border-radius:8px}
@@ -50,6 +50,7 @@ nav .links a:hover{color:var(--text)}
 @keyframes drift{to{transform:scale(1.12) translate(-1.2%,-1%)}}
 .hero::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(to top,var(--bg) 4%,color-mix(in srgb,var(--bg) 55%,transparent) 42%,transparent 75%),linear-gradient(to right,color-mix(in srgb,var(--bg) 92%,transparent),color-mix(in srgb,var(--bg) 55%,transparent) 45%,transparent 70%)}
 .hero .wrap{padding-bottom:84px;padding-top:140px}
+.hero{padding-top:62px}
 .pill{display:inline-flex;gap:8px;align-items:center;padding:7px 14px;border-radius:99px;border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 75%,transparent);font-size:13px;color:var(--mute);backdrop-filter:blur(8px)}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 12px var(--ok)}
 .hero h1{font-size:clamp(46px,8.5vw,112px);margin:22px 0 18px;max-width:11ch}
