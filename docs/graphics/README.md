@@ -96,3 +96,11 @@ these are the lower figures, not the best. The six-face live cube map of the Hig
 
 Accepted as met with the default settings (static cube map): 17 of 18 scenes at 56-60 fps at 1080p on the M4, nevadadrift at night in rain with
 headlights at 45-52 fps while another job loaded the Mac. AC's six-face live cube map (High preset) is a user choice that costs 10-25 fps on the heavy tracks.
+
+## Last checks
+
+- `checks/shadows_sweep_12.jpg`: shadows at 12 camera positions (3 tracks x camera distances 0.4, 0.9, 2 and 5 m x different angles, afternoon sun): soft
+  edges from the car's door to the tree shadows and the canopy, no acne and no floating shadows; the views inside the car or a wall are cut-outs, not shadow faults.
+- Flicker on video: a 5 s screen recording at 30 fps (120 frames) of a standing car in front of foliage (akina, day), the old build and the new:
+  mean frame-to-frame difference 0.27 before and 0.25 after, pixels that flip by more than 40 levels 0.000 % on average (max 0.002 % and 0.003 %).
+  Nothing shimmers in either build.
