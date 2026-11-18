@@ -104,3 +104,18 @@ headlights at 45-52 fps while another job loaded the Mac. AC's six-face live cub
 - Flicker on video: a 5 s screen recording at 30 fps (120 frames) of a standing car in front of foliage (akina, day), the old build and the new:
   mean frame-to-frame difference 0.27 before and 0.25 after, pixels that flip by more than 40 levels 0.000 % on average (max 0.002 % and 0.003 %).
   Nothing shimmers in either build.
+
+## Bloom on every look (AC's glare on vs `GLARE=0`, GT-R on drift, 1280x720)
+
+| look | pixels above 200 | mean change in a 40 px ring around them | largest change |
+|---|---|---|---|
+| day | 12 % | 0.38 | 112 |
+| sunset | 7 % | 0.04 | 41 |
+| sunset, sun in front | 9 % | 0.26 | 76 |
+| night, rain | 0.02 % | 1.73 | 148 |
+| night, dry | 0.01 % | 0.04 | 40 |
+| day, rain | 0.01 % | 1.33 | 138 |
+
+The glare is there in every look; it is gentle and strongest where a few very bright spots stand in a dark picture (night in rain: 1.7 levels in the ring,
+up to 148 at the lamps). The wet road at night in front of the car, with poles, trees and the car mirrored: `checks/wet_road_night_front.png`;
+the lamps' own lens glow is not mirrored (the lenses barely glow in the frame, so the road shows the light pool and the poles, not the lamps).
