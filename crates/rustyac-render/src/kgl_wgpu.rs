@@ -1988,16 +1988,19 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
                                 let slack = vec3<f32>(0.04);
                                 let on_car = all(abs(lh - gain.a[20].xyz) < gain.a[21].xyz + slack) || all(abs(lh - gain.a[22].xyz) < gain.a[23].xyz + slack);
                                 if (on_car && dist_c < 40.0) {{
-                                    let hx = wpos(px + vec2<i32>(1, 0), dims);
-                                    let hy = wpos(px + vec2<i32>(0, 1), dims);
-                                    var n = normalize(cross(hy - hit, hx - hit));
+                                    // (a normal from the neighbours three pixels away on each side: the depth's steps do not show)
+                                    let hx = wpos(px + vec2<i32>(3, 0), dims);
+                                    let hy = wpos(px + vec2<i32>(0, 3), dims);
+                                    let lx = wpos(px - vec2<i32>(3, 0), dims);
+                                    let ly = wpos(px - vec2<i32>(0, 3), dims);
+                                    var n = normalize(cross(hy - ly, hx - lx));
                                     let eye = -ray / dist_c;
                                     if (dot(n, eye) < 0.0) {{ n = -n; }}
-                                    if (length(hx - hit) < 0.05 * dist_c + 0.1 && length(hy - hit) < 0.05 * dist_c + 0.1) {{
+                                    if (length(hx - lx) < 0.1 * dist_c + 0.2 && length(hy - ly) < 0.1 * dist_c + 0.2) {{
                                         let day = gain.a[30].w;
                                         let h = normalize(gain.a[30].xyz + eye);
                                         let nh = max(dot(n, h), 0.0);
-                                        let sun_glint = (pow(nh, 220.0) * 1.6 + pow(nh, 40.0) * 0.12) * day * smoothstep(0.0, 0.15, gain.a[30].y);
+                                        let sun_glint = (pow(nh, 120.0) * 1.2 + pow(nh, 30.0) * 0.12) * day * smoothstep(0.0, 0.15, gain.a[30].y);
                                         let rim = pow(1.0 - max(dot(n, eye), 0.0), 4.0) * 0.22 * (0.25 + 0.75 * day);
                                         let sky = mix(vec3<f32>(0.10, 0.12, 0.2), vec3<f32>(0.55, 0.7, 0.95), day * clamp(n.y * 0.5 + 0.6, 0.0, 1.0));
                                         // what the paint and the glass mirror: the eye's ray bounced off the surface, walked through the picture

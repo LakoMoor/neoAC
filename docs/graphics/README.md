@@ -16,3 +16,13 @@
 
 Web demo: the headlights, a drag / pinch / double tap for the camera and a Lights button work in the browser (WebGPU
 checked in Chrome by day; night lights and the WebGL2 picture are not checked).
+
+## Extra checks (`checks/`)
+
+- `bloom_off_on_night.png`: post-process off (left) and on (right), night in rain, headlights on. The glow is there around the LED strip and
+  lamps but small: AC's bloom only lifts very bright pixels, and a dark night frame has few.
+- `shadows_near_far.png`: a close camera (a car's shadow on tarmac, left) and a far one (tree and house shadows on the ground, right):
+  soft edges, no acne, no floating shadows.
+- `glint_paint_smooth.png`: the sun's glint on a door; the normal comes from neighbours three pixels away so the depth's steps do not show.
+- Night, wet: the road mirrors trees, a lorry and the car itself (nevadadrift and drift in rain); the bonnet mirrors the sky and trees. The sun glint is
+  zero at night by design (no sun); the lamps' light on the road is the night's glint.
