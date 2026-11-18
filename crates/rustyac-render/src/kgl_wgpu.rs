@@ -1768,8 +1768,8 @@ fn boxcut(lo: vec3<f32>, ld: vec3<f32>, centre: vec3<f32>, half: vec3<f32>, tt: 
                                         var refl = vec3<f32>(0.0);
                                         var found = 0.0;
                                         var tt = 0.25;
-                                        for (var s = 0; s < 28; s = s + 1) {{
-                                            tt = tt * 1.16;
+                                        for (var s = 0; s < 12; s = s + 1) {{
+                                            tt = tt * 1.36;
                                             let pp = hit + rdir * tt;
                                             let rel = pp - cam;
                                             let zc = dot(rel, gain.a[26].xyz);
@@ -1837,7 +1837,10 @@ if (gain.a[3].w > 0.0 && have_depth) {{
         let hit = wpos(px, dims);
         let ray = hit - cam;
         let dist_c = length(ray);
-        if (dist_c < 70.0) {{
+        // (most of the picture lies outside both beams: it is left alone before the normal is worked out)
+        let c0 = dot(normalize(hit - gain.a[4].xyz), gain.a[6].xyz);
+        let c1 = dot(normalize(hit - gain.a[5].xyz), gain.a[6].xyz);
+        if (dist_c < 70.0 && max(c0, c1) > 0.35) {{
             let hx = wpos(px + vec2<i32>(1, 0), dims);
             let hy = wpos(px + vec2<i32>(0, 1), dims);
             var n = normalize(cross(hy - hit, hx - hit));
@@ -1942,6 +1945,30 @@ if (gain.a[3].w > 0.0 && !have_depth) {{
                 // the lamp's colour is the model's own (lights.ini)
                 let col = gain.a[i + 5].xyz;
                 c = vec4<f32>(c.rgb + col * (core * 1.4 + halo) * g.w, c.a);
+            }}
+        }}
+    }}
+    // the lamps again in the wet road, upside down and drawn out long: the lens' mirror image below the ground
+    let wet = gain.a[28].z;
+    if (wet > 0.0) {{
+        let luma = dot(c.rgb, vec3<f32>(0.3, 0.59, 0.11));
+        let dark = 1.0 - smoothstep(0.25, 0.6, luma);
+        for (var i = 11; i < 15; i = i + 1) {{
+            let g = gain.a[i];
+            if (g.w > 0.0) {{
+                var m = g.xyz;
+                m.y = 2.0 * gain.a[2].w - m.y;
+                let rel = m - gain.a[3].xyz;
+                let z = dot(rel, gain.a[2].xyz);
+                if (z > 0.3) {{
+                    let sx = dot(rel, gain.a[0].xyz) / (z * tg * asp);
+                    let sy = dot(rel, gain.a[1].xyz) / (z * tg);
+                    let dd = (ndcp - vec2<f32>(sx, sy)) * vec2<f32>(asp, 1.0);
+                    let r = 0.045 / (z * tg + 0.8) * 3.0;
+                    // longer downwards from the mirror point, thin sideways
+                    let streak = exp(-(dd.x * dd.x) / (r * r * 0.5)) * exp(-abs(dd.y) / (r * 5.0)) * 0.5;
+                    c = vec4<f32>(c.rgb + gain.a[i + 5].xyz * streak * g.w * wet * dark * 0.8, c.a);
+                }}
             }}
         }}
     }}
